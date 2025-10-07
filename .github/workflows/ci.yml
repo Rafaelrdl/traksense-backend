@@ -1,0 +1,33 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      - run: python -m pip install black ruff
+      - run: ruff check .
+      - run: black --check .
+      - run: python -c "import sys; print('backend import ok')"
+  ingest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ingest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt
+      - run: python -m pip install black ruff
+      - run: ruff check .
+      - run: black --check .
+      - run: python -c "import importlib; importlib.import_module('asyncio_mqtt'); print('ingest deps ok')"
