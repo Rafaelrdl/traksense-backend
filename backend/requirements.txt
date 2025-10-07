@@ -82,3 +82,13 @@ pytest>=8.0
 # - Gerenciamento de transações de teste
 # Docs: https://pytest-django.readthedocs.io/
 pytest-django>=4.7
+
+# ----------------------------------------------------------------------------
+# JSON Schema Validation
+# ----------------------------------------------------------------------------
+# jsonschema: Validação de estruturas JSON contra schemas
+# - Usado para validar DashboardTemplate JSON
+# - Suporte Draft 2020-12
+# - Mensagens de erro detalhadas
+# Docs: https://python-jsonschema.readthedocs.io/
+jsonschema>=4.22

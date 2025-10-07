@@ -1,0 +1,70 @@
+{
+  "$id": "https://climatrak.io/schemas/dashboard_template_v1.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Dashboard Template Schema v1",
+  "description": "Schema para validação de templates de dashboard do TrakSense",
+  "type": "object",
+  "required": ["schema", "panels", "layout"],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "v1",
+      "description": "Versão do schema (sempre v1 para este schema)"
+    },
+    "layout": {
+      "type": "string",
+      "description": "Layout do dashboard (ex: cards-2col, cards-3col, grid)"
+    },
+    "panels": {
+      "type": "array",
+      "description": "Lista de painéis do dashboard",
+      "items": {
+        "type": "object",
+        "required": ["type", "title"],
+        "properties": {
+          "type": {
+            "enum": ["timeseries", "status", "timeline", "kpi", "button"],
+            "description": "Tipo do painel"
+          },
+          "title": {
+            "type": "string",
+            "description": "Título do painel"
+          },
+          "point": {
+            "type": "string",
+            "description": "Nome do ponto único referenciado (para timeseries, status, kpi)"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Lista de pontos referenciados (para timeline)"
+          },
+          "agg": {
+            "enum": ["raw", "1m", "5m", "1h"],
+            "description": "Agregação temporal (para timeseries)"
+          },
+          "yUnit": {
+            "type": "string",
+            "description": "Unidade do eixo Y (para timeseries)"
+          },
+          "mappings": {
+            "type": "object",
+            "description": "Mapeamento de valores para labels (para status/enum)"
+          },
+          "op": {
+            "type": "string",
+            "description": "Operação do botão (para button, ex: reset_fault)"
+          },
+          "params": {
+            "type": "object",
+            "description": "Parâmetros da operação (para button)"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}
