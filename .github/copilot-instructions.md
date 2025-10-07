@@ -352,3 +352,7 @@ Não inventar novos tópicos MQTT, não mover telemetria para tabelas por tenant
 Documentar decisões em comentários e, se relevante, criar ADR em /docs/adr/ADR-00X.md.
 
 Lembrete final: o frontend (Spark) é outro projeto. Aqui, entregue APIs estáveis, ingest confiável, provisionamento EMQX, Timescale + RLS, e templates JSON de dashboards — nada de UI.
+
+
+
+Sempre comente os codigos para ajudar no entendimento do codigo em portugues.
