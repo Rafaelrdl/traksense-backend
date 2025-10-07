@@ -17,7 +17,6 @@ try:
         schema_name='public',
         defaults={
             'name': 'Public Tenant',
-            'code': 'PUBLIC',
         }
     )
     if created:
