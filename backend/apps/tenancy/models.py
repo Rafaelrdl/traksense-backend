@@ -113,7 +113,8 @@ class Client(TenantMixin):
     # Criar schema automaticamente ao salvar
     # True: conveniente em dev (cria schema + roda migrações)
     # False: recomendado em prod (usar manage.py migrate_schemas)
-    auto_create_schema = True
+    # NOTA: Desativado para controlar ordem de migrations manualmente (evita erro de FK circular)
+    auto_create_schema = False
     
     # Metadados de auditoria
     created_on = models.DateTimeField(
