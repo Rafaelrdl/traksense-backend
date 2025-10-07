@@ -1,68 +1,457 @@
+# ============================================================================
+# Docker Compose - TrakSense IoT Monitoring Platform
+# ============================================================================
+# Orquestra todos os serviços necessários para a plataforma TrakSense.
+#
+# Arquitetura:
+#   [Devices IoT] --> [EMQX Broker] --> [Ingest Service] --> [TimescaleDB]
+#                                           ^
+#                                           |
+#                     [Django API] <--------+
+#                           |
+#                           v
+#                     [Frontend React] (opcional)
+#
+# Serviços:
+# - emqx: Broker MQTT para comunicação com dispositivos IoT
+# - db: PostgreSQL + TimescaleDB para metadados e telemetria
+# - redis: Cache e mensageria (Celery tasks)
+# - api: Backend Django + DRF com django-tenants
+# - ingest: Serviço Python assíncrono para ingestão MQTT
+# - frontend: React/Vite UI (desligado por padrão, usar profile)
+#
+# Uso:
+#   # Subir todos os serviços (exceto frontend):
+#   docker compose up -d
+#
+#   # Subir incluindo frontend:
+#   docker compose --profile frontend up -d
+#
+#   # Rebuild após mudanças:
+#   docker compose up -d --build
+#
+#   # Ver logs:
+#   docker compose logs -f [service]
+#
+#   # Derrubar tudo:
+#   docker compose down
+#
+#   # Derrubar e remover volumes (CUIDADO: perde dados):
+#   docker compose down -v
+#
+# Ambiente:
+#   Este arquivo é configurado para DESENVOLVIMENTO.
+#   Para produção, ajustar:
+#   - Usar secrets do Docker Swarm/Kubernetes
+#   - Ativar TLS no EMQX (porta 8883)
+#   - Usar volumes nomeados para persistência
+#   - Configurar health checks
+#   - Configurar restart policies
+#   - Limitar recursos (memory/cpu)
+#
+# Autor: TrakSense Team
+# Data: 2025-10-07
+# ============================================================================
+
+# Versão do Docker Compose (3.9 suporta todas as features necessárias)
 version: "3.9"
 
+# Nome do projeto (usado como prefixo em networks e volumes)
 name: traksense
 
+# ============================================================================
+# SERVIÇOS
+# ============================================================================
 services:
+
+  # --------------------------------------------------------------------------
+  # EMQX - Broker MQTT
+  # --------------------------------------------------------------------------
+  # Broker MQTT de alta performance para comunicação com dispositivos IoT.
+  # Suporta milhões de conexões simultâneas, clustering e plugins.
+  #
+  # Recursos:
+  # - MQTT 3.1.1 e 5.0
+  # - WebSocket para browsers
+  # - Auth/ACL por device (provisioning via HTTP API)
+  # - LWT (Last Will and Testament) para detecção de offline
+  # - Retain messages para estado persistente
+  # - Dashboard web para monitoramento
+  #
+  # Tópicos Padrão TrakSense:
+  # - traksense/{tenant}/{site}/{device}/state   (retain + LWT)
+  # - traksense/{tenant}/{site}/{device}/telem   (telemetria)
+  # - traksense/{tenant}/{site}/{device}/event   (eventos)
+  # - traksense/{tenant}/{site}/{device}/alarm   (alarmes)
+  # - traksense/{tenant}/{site}/{device}/cmd     (comandos)
+  # - traksense/{tenant}/{site}/{device}/ack     (confirmações)
   emqx:
+    # Imagem oficial EMQX versão 5.8.3 (tag específica para estabilidade)
     image: emqx/emqx:5.8.3
+    
+    # Nome fixo do container (facilita referência em scripts)
     container_name: emqx
+    
+    # Mapeamento de portas: host:container
     ports:
-      - "1883:1883"    # MQTT (sem TLS no dev)
-      - "8883:8883"    # MQTT TLS (não usar no dev)
-      - "18083:18083"  # Dashboard EMQX
+      # MQTT sem TLS - Desenvolvimento
+      # Porta padrão para conexões MQTT não criptografadas
+      # Dispositivos IoT conectam aqui em ambiente dev
+      - "1883:1883"
+      
+      # MQTT com TLS - Produção
+      # Porta para conexões MQTT criptografadas (TLS/SSL)
+      # IMPORTANTE: Configurar certificados antes de usar
+      - "8883:8883"
+      
+      # Dashboard Web do EMQX
+      # Interface de administração e monitoramento
+      # Acesso: http://localhost:18083
+      # Credenciais padrão: admin / public (MUDAR EM PRODUÇÃO!)
+      - "18083:18083"
+    
+    # Variáveis de ambiente para configuração do EMQX
     environment:
+      # Logs para console (melhor para Docker, evita arquivos)
       - EMQX_LOG__TO=console
+      
+      # Cookie para clustering (nodes EMQX se comunicam usando este secret)
+      # Em produção: usar valor aleatório seguro e consistente
       - EMQX_NODE__COOKIE=traksense_cookie_dev
-      # Dev: TLS desativado por padrão (usar 1883)
+      
+      # NOTA: TLS está DESABILITADO no desenvolvimento
+      # Para habilitar TLS em produção, adicionar:
+      # - EMQX_LISTENERS__SSL__DEFAULT__ENABLED=true
+      # - EMQX_LISTENERS__SSL__DEFAULT__KEYFILE=/certs/key.pem
+      # - EMQX_LISTENERS__SSL__DEFAULT__CERTFILE=/certs/cert.pem
+    
+    # Conecta à network compartilhada
     networks: [app-net]
+    
+    # TODO (Produção):
+    # volumes:
+    #   - emqx-data:/opt/emqx/data
+    #   - emqx-log:/opt/emqx/log
+    #   - ./certs:/certs:ro
+    # restart: unless-stopped
+    # healthcheck:
+    #   test: ["CMD", "emqx", "ping"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
 
+  # --------------------------------------------------------------------------
+  # PostgreSQL + TimescaleDB - Banco de Dados
+  # --------------------------------------------------------------------------
+  # PostgreSQL 16 com extensão TimescaleDB para time-series.
+  # Imagem HA (High Availability) inclui replicação e backup.
+  #
+  # Schemas:
+  # - public: Dados compartilhados (telemetria, timescale objects)
+  # - <tenant_schema>: Dados isolados por tenant (devices, points, etc.)
+  #
+  # Recursos TimescaleDB:
+  # - Hypertables: Particionamento automático por tempo
+  # - Continuous Aggregates: Materialized views com refresh automático
+  # - Compression: Compactação de dados antigos (10x economia)
+  # - Retention Policies: Remoção automática de dados expirados
+  # - Parallel Queries: Performance para agregações complexas
   db:
+    # Imagem TimescaleDB com PostgreSQL 16
+    # Inclui extensões: timescaledb, postgis, pg_stat_statements
     image: timescale/timescaledb-ha:pg16
+    
     container_name: db
+    
+    # Variáveis de ambiente do PostgreSQL
     environment:
+      # Usuário superadmin do PostgreSQL
       - POSTGRES_USER=postgres
+      
+      # Senha do superadmin
+      # CRÍTICO: MUDAR EM PRODUÇÃO! Usar secrets do Docker/K8s
       - POSTGRES_PASSWORD=postgres
+      
+      # Nome do banco de dados principal
+      # django-tenants criará schemas dentro deste banco
       - POSTGRES_DB=traksense
+    
+    # Expõe porta PostgreSQL (5432) para host
+    # Útil para acesso direto via psql, pgAdmin, DBeaver
     ports: ["5432:5432"]
+    
     networks: [app-net]
+    
+    # TODO (Produção):
+    # volumes:
+    #   - pg-data:/home/postgres/pgdata/data
+    #   - ./backups:/backups
+    # restart: unless-stopped
+    # healthcheck:
+    #   test: ["CMD-SHELL", "pg_isready -U postgres"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 5
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 2G
+    #       cpus: '2'
 
+  # --------------------------------------------------------------------------
+  # Redis - Cache e Message Broker
+  # --------------------------------------------------------------------------
+  # Redis para:
+  # 1. Cache de queries Django (sessões, ORM queries)
+  # 2. Celery broker (tasks assíncronas: alertas, notificações)
+  # 3. Pub/Sub para eventos real-time (opcional)
+  #
+  # Estruturas usadas:
+  # - Strings: Cache de queries
+  # - Lists: Filas Celery (tasks pendentes)
+  # - Sorted Sets: Retry/scheduled tasks
+  # - Pub/Sub: Eventos real-time (dashboards)
   redis:
+    # Redis 7 (última versão estável)
+    # Mudanças principais: ACL melhorado, Redis Functions
     image: redis:7
+    
     container_name: redis
+    
+    # Porta padrão Redis
     ports: ["6379:6379"]
+    
     networks: [app-net]
+    
+    # TODO (Produção):
+    # command: redis-server --requirepass your_secure_password --appendonly yes
+    # volumes:
+    #   - redis-data:/data
+    # restart: unless-stopped
+    # healthcheck:
+    #   test: ["CMD", "redis-cli", "ping"]
+    #   interval: 10s
+    #   timeout: 3s
+    #   retries: 3
 
+  # --------------------------------------------------------------------------
+  # Django API - Backend REST
+  # --------------------------------------------------------------------------
+  # API REST usando Django 4.2 + Django REST Framework.
+  # Multi-tenancy via django-tenants (schema-per-tenant).
+  #
+  # Responsabilidades:
+  # - APIs REST para frontend (CRUD devices, points, dashboards)
+  # - APIs de dados (queries time-series com agregações)
+  # - Admin Django para operações internas
+  # - Provisionamento EMQX (Auth/ACL por device)
+  # - Middleware para Row Level Security (GUC tenant_id)
+  # - RBAC: internal_ops, customer_admin, viewer
+  #
+  # Endpoints principais:
+  # - /admin/ - Django admin (internal_ops only)
+  # - /api/devices/ - CRUD devices
+  # - /api/timeseries/data/points - Query telemetria com agg
+  # - /api/dashboards/{id} - Configuração de dashboards
+  # - /api/cmd/{device_id} - Enviar comandos MQTT
+  # - /health - Health check
   api:
+    # Build da imagem a partir do Dockerfile em ../backend
     build: ../backend
+    
     container_name: api
+    
+    # Carrega variáveis de ambiente do arquivo .env.api
+    # Contém: DATABASE_URL, REDIS_URL, SECRET_KEY, etc.
     env_file:
       - .env.api
+    
+    # Porta 8000: Django development server
+    # Em produção: usar gunicorn/uvicorn + nginx
     ports: ["8000:8000"]
+    
+    # Dependências: aguarda db e redis estarem prontos
+    # NOTA: depends_on não espera serviço estar "saudável"
+    # apenas que container tenha iniciado
     depends_on: [db, redis]
+    
     networks: [app-net]
+    
+    # Comando de inicialização
+    # 1. Executa migrações Django (cria/atualiza tabelas)
+    # 2. Inicia development server em 0.0.0.0:8000
+    #
+    # NOTA: runserver é APENAS para desenvolvimento!
+    # Em produção, usar:
+    #   gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers 4
     command: >
       sh -c "
         python manage.py migrate &&
         python manage.py runserver 0.0.0.0:8000
       "
+    
+    # TODO (Produção):
+    # command: >
+    #   sh -c "
+    #     python manage.py migrate_schemas &&
+    #     gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2
+    #   "
+    # volumes:
+    #   - static-files:/app/staticfiles
+    #   - media-files:/app/media
+    # restart: unless-stopped
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
 
+  # --------------------------------------------------------------------------
+  # Ingest Service - Ingestão de Dados IoT
+  # --------------------------------------------------------------------------
+  # Serviço Python assíncrono para consumir mensagens MQTT e
+  # persistir no TimescaleDB com isolamento multi-tenant (RLS).
+  #
+  # Fluxo:
+  # 1. Subscribe: traksense/+/+/+/telem (wildcard)
+  # 2. Parse topic: extrair tenant/site/device
+  # 3. Validate: usar adapter Pydantic (parsec_v1, etc.)
+  # 4. Normalize: converter para envelope padrão
+  # 5. Buffer: acumular até atingir batch size (10k)
+  # 6. Set GUC: app.tenant_id = <tenant_uuid> (RLS)
+  # 7. Batch Insert: asyncpg.copy_records_to_table()
+  # 8. ACK: confirmar processamento
+  #
+  # Performance:
+  # - Totalmente assíncrono (asyncio)
+  # - Batch inserts de 10k registros
+  # - Connection pool asyncpg
+  # - Zero bloqueios (non-blocking I/O)
+  #
+  # Error Handling:
+  # - Payload inválido -> DLQ (ingest_errors table)
+  # - Reconexão MQTT com backoff exponencial
+  # - Retry de DB com policy configurável
   ingest:
+    # Build da imagem a partir do Dockerfile em ../ingest
     build: ../ingest
+    
     container_name: ingest
+    
+    # Carrega variáveis de ambiente do arquivo .env.ingest
+    # Contém: MQTT_URL, DATABASE_URL, BATCH_SIZE, etc.
     env_file:
       - .env.ingest
+    
+    # Dependências: aguarda EMQX e DB
     depends_on: [emqx, db]
+    
     networks: [app-net]
+    
+    # TODO (Produção):
+    # restart: unless-stopped
+    # deploy:
+    #   replicas: 2  # Escalar horizontalmente
+    #   resources:
+    #     limits:
+    #       memory: 512M
+    #       cpus: '1'
+    # healthcheck:
+    #   test: ["CMD", "python", "-c", "import socket; ..."]
+    #   interval: 30s
+    #   timeout: 5s
+    #   retries: 3
 
-  # FRONTEND DESLIGADO POR PADRÃO (profile 'frontend')
+  # --------------------------------------------------------------------------
+  # Frontend (React/Vite) - DESLIGADO POR PADRÃO
+  # --------------------------------------------------------------------------
+  # Interface web em React para visualização de dashboards e operação.
+  # Desligado por padrão para economizar recursos durante desenvolvimento
+  # backend-only.
+  #
+  # IMPORTANTE: Este é um placeholder para referência.
+  # Na Fase 1, o frontend está em outro repositório (Spark).
+  #
+  # Para ativar:
+  #   docker compose --profile frontend up -d
+  #
+  # Características:
+  # - React 18 + Vite
+  # - Mantine UI components
+  # - ECharts para gráficos
+  # - TanStack Query para data fetching
+  # - Renderização dinâmica de dashboards (JSON-driven)
   frontend:
+    # Profile: só sobe quando explicitamente solicitado
     profiles: ["frontend"]
+    
+    # Build da imagem a partir do Dockerfile em ../frontend
     build: ../frontend
+    
     container_name: frontend
+    
+    # Porta 5173: Vite development server (HMR ativo)
     ports: ["5173:5173"]
+    
     networks: [app-net]
-    command: ["npm","run","dev","--","--host","0.0.0.0"]
+    
+    # Comando Vite dev server
+    # --host 0.0.0.0: Permite acesso de fora do container
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+    
+    # TODO (Produção):
+    # Multi-stage build:
+    # 1. Stage build: npm install + npm run build
+    # 2. Stage runtime: nginx servindo /dist
+    # volumes:
+    #   - ./frontend:/app
+    #   - /app/node_modules
 
+# ============================================================================
+# NETWORKS
+# ============================================================================
+# Network bridge para comunicação entre containers.
+# Todos os serviços conectam à mesma network (app-net).
+#
+# DNS interno:
+# - Containers se comunicam pelo nome do serviço
+# - Exemplo: api acessa db via hostname "db"
+# - Exemplo: ingest acessa emqx via hostname "emqx"
+#
+# Isolamento:
+# - Containers só veem outros containers na mesma network
+# - Host acessa via port mapping (ports: [host:container])
 networks:
   app-net:
+    # Driver bridge: network padrão Docker (single-host)
+    # Para multi-host, usar overlay (Swarm) ou CNI (Kubernetes)
     driver: bridge
+
+# ============================================================================
+# VOLUMES (Produção)
+# ============================================================================
+# Descomentar para persistência de dados em produção:
+#
+# volumes:
+#   # PostgreSQL data (crítico: backups regulares!)
+#   pg-data:
+#     driver: local
+#   
+#   # Redis data (AOF persistence)
+#   redis-data:
+#     driver: local
+#   
+#   # EMQX data e logs
+#   emqx-data:
+#     driver: local
+#   emqx-log:
+#     driver: local
+#   
+#   # Django static files (servidos por nginx)
+#   static-files:
+#     driver: local
+#   
+#   # Django media files (uploads)
+#   media-files:
+#     driver: local
+# ============================================================================

@@ -1,6 +1,45 @@
 """
-Management command to seed timeseries data for testing.
-Creates 2 tenants (alpha and beta) and generates ~1M telemetry rows per tenant.
+Seed Timeseries Command - Popular banco com dados de teste
+
+Este management command cria tenants e popula ts_measure com milhões de linhas
+para testes de performance, RLS e continuous aggregates.
+
+Uso:
+---
+# Padrão: 1M linhas/tenant, 24h, intervalo 2s
+python manage.py seed_ts
+
+# Customizado: 10M linhas, 7 dias, intervalo 1s
+python manage.py seed_ts --rows-per-tenant 10000000 --hours 168 --interval-seconds 1
+
+Dados gerados:
+-------------
+- 2 tenants: alpha (Alpha Corp), beta (Beta Industries)
+- Domínios: alpha.localhost, beta.localhost
+- Device/Point IDs: UUIDs fixos (para queries de teste)
+- Valores: v_num aleatório (10-100) com variação temporal
+- Timestamps: distribuídos uniformemente no período (ex: últimas 24h)
+
+Performance:
+-----------
+- 1M linhas: ~30s (batch insert 10k rows/vez)
+- 10M linhas: ~5 min
+- RLS: isolamento automático por tenant_id
+
+Testes com dados gerados:
+-------------------------
+# Query raw (lenta)
+GET /data/points?device_id=<uuid>&point_id=<uuid>&from=...&to=...&agg=raw
+
+# Query agregada (rápida)
+GET /data/points?device_id=<uuid>&point_id=<uuid>&from=...&to=...&agg=1m
+
+# Testar RLS (mudar tenant via domínio)
+Host: alpha.localhost → vê apenas dados alpha
+Host: beta.localhost → vê apenas dados beta
+
+Autor: TrakSense Team
+Data: 2025-10-07
 """
 import uuid
 from datetime import datetime, timedelta
@@ -11,7 +50,7 @@ import random
 
 
 class Command(BaseCommand):
-    help = 'Seed timeseries data with 2 tenants and ~1M rows each for testing'
+    help = 'Popula ts_measure com dados de teste (2 tenants, ~1M linhas/tenant)'
 
     def add_arguments(self, parser):
         parser.add_argument(

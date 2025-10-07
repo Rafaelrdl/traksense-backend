@@ -1,6 +1,30 @@
 """
-Tests for RLS (Row Level Security) isolation.
-Ensures that tenants cannot access each other's data.
+RLS Isolation Tests - Testes de segurança de isolamento entre tenants
+
+TESTES CRÍTICOS para garantir que RLS funciona corretamente.
+
+Cenários testados:
+-----------------
+1. Tenant A não pode ver dados de Tenant B (cross-tenant access)
+2. Sem GUC configurado: queries retornam 0 linhas (RLS bloqueia tudo)
+3. GUC configurado: queries retornam apenas dados do tenant atual
+
+Importância:
+-----------
+- SEGURANÇA: se RLS falhar, dados vazam entre tenants
+- COMPLIANCE: LGPD/GDPR exigem isolamento de dados
+- CRÍTICO: esses testes NUNCA devem falhar
+
+Executar:
+--------
+# Apenas testes de RLS
+pytest tests/test_rls_isolation.py -v
+
+# Com output detalhado
+pytest tests/test_rls_isolation.py -v -s
+
+Autor: TrakSense Team
+Data: 2025-10-07
 """
 import pytest
 import uuid
@@ -10,7 +34,7 @@ from tenancy.models import Client, Domain
 
 @pytest.mark.django_db
 class TestRLSIsolation:
-    """Test Row Level Security between tenants."""
+    """Testes de Row Level Security (isolamento entre tenants)."""
     
     def test_rls_blocks_cross_tenant_access(self):
         """

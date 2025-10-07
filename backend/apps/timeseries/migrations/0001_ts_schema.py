@@ -1,11 +1,67 @@
 """
-TimescaleDB schema: hypertable, índices, RLS e continuous aggregates.
+Timeseries Migration - TimescaleDB Schema Completo (DDL)
 
-IMPORTANTE: Esta migration cria a estrutura de telemetria no schema public.
-- Hypertable única (ts_measure) com particionamento por tempo
-- RLS por tenant_id (usando GUC app.tenant_id)
-- Continuous aggregates (1m, 5m, 1h) para performance
-- Políticas de refresh automático
+Esta migration cria a estrutura COMPLETA de telemetria IoT:
+1. Hypertable (particionamento automático por tempo)
+2. Índices (performance)
+3. Row Level Security (isolamento por tenant)
+4. Continuous Aggregates (views materializadas 1m/5m/1h)
+5. Refresh Policies (atualização automática)
+6. Compression/Retention (opcional)
+
+Arquitetura:
+-----------
+Schema public (compartilhado por todos tenants):
+- ts_measure: hypertable com RLS por tenant_id
+- ts_measure_1m/5m/1h: continuous aggregates (refresh automático)
+
+Por quê SQL puro?
+----------------
+TimescaleDB requer DDL específico que Django ORM não suporta:
+- create_hypertable(): função TimescaleDB
+- MATERIALIZED VIEW WITH (timescaledb.continuous): sintaxe específica
+- add_continuous_aggregate_policy(): configuração de refresh
+- RLS com GUC custom (app.tenant_id)
+
+Estrutura:
+---------
+ts_measure (hypertable):
+- tenant_id, device_id, point_id: UUIDs (identificadores)
+- ts: timestamptz (tempo de medição, particionado)
+- v_num, v_bool, v_text: valores (apenas um preenchido por linha)
+- unit: unidade de medida (ex: "°C", "bar")
+- qual: qualidade (0=ok, 1=suspeito, 2=falha)
+- meta: jsonb (metadados adicionais)
+
+RLS Policy:
+----------
+USING (tenant_id::text = current_setting('app.tenant_id', TRUE))
+
+Fluxo:
+1. Middleware: SET LOCAL app.tenant_id = '<tenant_uuid>'
+2. Query: SELECT * FROM ts_measure WHERE device_id = '...'
+3. RLS aplica filtro automático: AND tenant_id::text = current_setting('app.tenant_id')
+4. Resultado: apenas dados do tenant atual
+
+Continuous Aggregates:
+---------------------
+Views materializadas atualizadas automaticamente (background job):
+- 1m: refresh a cada 5 min (lag: 5 min)
+- 5m: refresh a cada 15 min (lag: 15 min)
+- 1h: refresh a cada 1h (lag: 1h)
+
+Performance:
+- raw 30 dias: ~2.6M linhas (timeout)
+- 1m 30 dias: ~43k linhas (5s)
+- 1h 30 dias: ~720 linhas (100ms) ✓
+
+Rollback:
+--------
+python manage.py migrate timeseries zero
+(Apaga TODOS os dados de telemetria!)
+
+Autor: TrakSense Team
+Data: 2025-10-07
 """
 from django.db import migrations
 

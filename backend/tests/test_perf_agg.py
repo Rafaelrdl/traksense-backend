@@ -1,6 +1,36 @@
 """
-Performance tests for timeseries queries.
-Validates that queries meet performance SLA (≤ 300ms for 24h window with ~1M samples).
+Performance Tests - Testes de performance de queries TimescaleDB
+
+Valida que queries atendem SLA de performance (≤ 300ms para janela de 24h).
+
+Cenários testados:
+-----------------
+1. Query raw (dados brutos): deve ser lenta (baseline)
+2. Query 1m (continuous aggregate): deve ser rápida (< 300ms)
+3. Query 5m/1h: deve ser muito rápida (< 100ms)
+
+SLA (Service Level Agreement):
+-----------------------------
+- raw 24h (1M samples): sem SLA (pode timeout)
+- 1m 24h (1.4k buckets): ≤ 300ms
+- 1h 24h (24 buckets): ≤ 100ms
+
+Importância:
+-----------
+- PERFORMANCE: dashboards devem carregar rápido (< 1s total)
+- UX: usuário não deve esperar mais de 2s para ver dados
+- ESCALABILIDADE: queries devem funcionar com milhões de linhas
+
+Executar:
+--------
+# Apenas testes de performance
+pytest tests/test_perf_agg.py -v
+
+# Com timing detalhado
+pytest tests/test_perf_agg.py -v -s --durations=10
+
+Autor: TrakSense Team
+Data: 2025-10-07
 """
 import pytest
 import uuid
@@ -12,9 +42,10 @@ from tenancy.models import Client, Domain
 
 @pytest.mark.django_db
 class TestPerformance:
-    """Test query performance with continuous aggregates."""
+    """Testes de performance de queries (continuous aggregates)."""
     
-    # Performance threshold in seconds (300ms = 0.3s)
+    # Threshold de performance em segundos (300ms = 0.3s)
+    # Queries 1m devem responder em < 300ms para janela de 24h
     PERFORMANCE_THRESHOLD = 0.3
     
     @pytest.fixture(autouse=True)

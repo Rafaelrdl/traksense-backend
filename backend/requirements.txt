@@ -1,7 +1,84 @@
+# ============================================================================
+# Dependências Python - TrakSense Backend API
+# ============================================================================
+# Django 4.2+ com suporte a multi-tenancy, REST API e TimescaleDB.
+#
+# Instalação:
+#   pip install -r requirements.txt
+#
+# Atualização:
+#   pip install --upgrade -r requirements.txt
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Django Core Framework
+# ----------------------------------------------------------------------------
+# Django 4.2 LTS (Long Term Support até abril 2026)
+# - ORM completo para PostgreSQL
+# - Sistema de migrations
+# - Admin interface
+# - Autenticação e permissões
+# Docs: https://docs.djangoproject.com/en/4.2/
 Django>=4.2,<5
+
+# ----------------------------------------------------------------------------
+# PostgreSQL Database Adapter
+# ----------------------------------------------------------------------------
+# psycopg2-binary: Driver PostgreSQL oficial para Python
+# - Conexão com PostgreSQL/TimescaleDB
+# - Suporte completo a tipos PostgreSQL (UUID, JSONB, arrays)
+# - Versão binary: inclui bibliotecas C pré-compiladas
+# Docs: https://www.psycopg.org/docs/
 psycopg2-binary>=2.9
+
+# ----------------------------------------------------------------------------
+# Environment Variables Management
+# ----------------------------------------------------------------------------
+# django-environ: Gerenciamento de variáveis de ambiente .env
+# - Lê arquivos .env (development)
+# - Parse automático de tipos (bool, int, list, dict, url)
+# - Segurança: evita hardcoded secrets
+# Docs: https://django-environ.readthedocs.io/
 django-environ>=0.11
+
+# ----------------------------------------------------------------------------
+# Django REST Framework (DRF)
+# ----------------------------------------------------------------------------
+# djangorestframework: Toolkit para construção de APIs REST
+# - Serializers (model <-> JSON)
+# - ViewSets e APIViews
+# - Autenticação (Token, JWT, Session)
+# - Paginação automática
+# Usado em: /api/timeseries/data/points, /api/devices/, etc.
+# Docs: https://www.django-rest-framework.org/
 djangorestframework>=3.15
+
+# ----------------------------------------------------------------------------
+# Multi-Tenancy (Schema-per-Tenant)
+# ----------------------------------------------------------------------------
+# django-tenants: Implementação de multi-tenancy para Django
+# - Schema PostgreSQL separado por tenant
+# - Roteamento por domínio (alpha.traksense.com, beta.traksense.com)
+# - Middleware automático de identificação de tenant
+# - Migrations por schema (migrate_schemas)
+# IMPORTANTE: Requer SHARED_APPS vs TENANT_APPS em settings.py
+# Docs: https://django-tenants.readthedocs.io/
 django-tenants>=3.6.1
+
+# ----------------------------------------------------------------------------
+# Testing Framework
+# ----------------------------------------------------------------------------
+# pytest: Framework moderno de testes Python
+# - Sintaxe simples e poderosa
+# - Fixtures reutilizáveis
+# - Melhor output de erros que unittest
+# Executar: pytest -v
+# Docs: https://docs.pytest.org/
 pytest>=8.0
+
+# pytest-django: Plugin pytest para Django
+# - Integração automática com Django
+# - Fixtures Django (@pytest.mark.django_db)
+# - Gerenciamento de transações de teste
+# Docs: https://pytest-django.readthedocs.io/
 pytest-django>=4.7
