@@ -2,3 +2,6 @@ Django>=4.2,<5
 psycopg2-binary>=2.9
 django-environ>=0.11
 djangorestframework>=3.15
+django-tenants>=3.6.1
+pytest>=8.0
+pytest-django>=4.7

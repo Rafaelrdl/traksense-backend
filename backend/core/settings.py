@@ -27,18 +27,34 @@ ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['*'])
 
 # Application definition
 
-INSTALLED_APPS = [
-    'django.contrib.admin',
-    'django.contrib.auth',
+# django-tenants: SHARED_APPS são compartilhados entre todos os tenants (schema public)
+SHARED_APPS = [
+    'django_tenants',  # DEVE ser o primeiro
     'django.contrib.contenttypes',
+    'django.contrib.auth',
     'django.contrib.sessions',
     'django.contrib.messages',
-    'django.contrib.staticfiles',
+    'django.contrib.admin',
     'rest_framework',
     'health',
+    'timeseries',  # App compartilhado para RLS/helpers/queries
+]
+
+# TENANT_APPS vivem no schema de cada tenant (metadados de negócio)
+TENANT_APPS = [
+    'tenancy',  # Client/Domain models
+    'devices',
+    'dashboards',
+    'rules',
+    'commands',
+]
+
+INSTALLED_APPS = list(SHARED_APPS) + [
+    app for app in TENANT_APPS if app not in SHARED_APPS
 ]
 
 MIDDLEWARE = [
+    'django_tenants.middleware.main.TenantMainMiddleware',  # DEVE ser o primeiro
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -46,6 +62,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'core.middleware.TenantGucMiddleware',  # RLS GUC setter
 ]
 
 ROOT_URLCONF = 'core.urls'
@@ -74,6 +91,16 @@ WSGI_APPLICATION = 'core.wsgi.application'
 DATABASES = {
     'default': env.db('DATABASE_URL', default='postgresql://postgres:postgres@localhost:5432/traksense')
 }
+
+# django-tenants configuration
+DATABASE_ROUTERS = ('django_tenants.routers.TenantSyncRouter',)
+
+TENANT_MODEL = "tenancy.Client"
+TENANT_DOMAIN_MODEL = "tenancy.Domain"
+
+# Public schema (tenant compartilhado)
+PUBLIC_SCHEMA_NAME = 'public'
+PUBLIC_SCHEMA_URLCONF = 'core.urls_public'  # URLs para schema public (opcional)
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
@@ -116,3 +143,37 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Redis (for future Celery/cache usage)
 REDIS_URL = env('REDIS_URL', default='redis://localhost:6379/0')
+
+# Logging
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'core.middleware': {
+            'handlers': ['console'],
+            'level': 'DEBUG' if DEBUG else 'INFO',
+            'propagate': False,
+        },
+        'timeseries': {
+            'handlers': ['console'],
+            'level': 'DEBUG' if DEBUG else 'INFO',
+            'propagate': False,
+        },
+    },
+}
