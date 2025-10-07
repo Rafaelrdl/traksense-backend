@@ -278,15 +278,21 @@ services:
     networks: [app-net]
     
     # Comando de inicialização
-    # 1. Executa migrações Django (cria/atualiza tabelas)
+    # 1. Executa migrações Django multi-tenant (cria/atualiza tabelas)
     # 2. Inicia development server em 0.0.0.0:8000
+    #
+    # IMPORTANTE: usar migrate_schemas --shared para django-tenants
+    # (migrations de SHARED_APPS no schema public)
     #
     # NOTA: runserver é APENAS para desenvolvimento!
     # Em produção, usar:
     #   gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers 4
+    #
+    # WORKAROUND: Ignorar migrations de timeseries temporariamente
+    # (serão criadas manualmente via SQL devido a limitação do atomic)
     command: >
       sh -c "
-        python manage.py migrate &&
+        python manage.py migrate_schemas --shared --fake timeseries &&
         python manage.py runserver 0.0.0.0:8000
       "
     

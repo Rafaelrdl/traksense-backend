@@ -80,7 +80,7 @@ class TimeseriesConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     
     # Nome do app (deve corresponder ao diretório)
-    name = 'timeseries'
+    name = 'apps.timeseries'
     
     # Nome amigável (exibido no Django Admin)
     verbose_name = 'Time Series (Telemetria)'

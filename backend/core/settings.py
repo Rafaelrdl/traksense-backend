@@ -89,9 +89,9 @@ SHARED_APPS = [
     'django_tenants',  # DEVE ser o primeiro!
     
     # Apps TrakSense compartilhados
-    'tenancy',
-    'timeseries',
-    'health',
+    'apps.tenancy',
+    'apps.timeseries',
+    'health',  # health está em backend/health/
     
     # Django built-in apps
     'django.contrib.contenttypes',
@@ -111,10 +111,10 @@ SHARED_APPS = [
 # - rules: Regras de alertas e limites
 # - commands: Comandos MQTT e ACKs
 TENANT_APPS = [
-    'devices',
-    'dashboards',
-    'rules',
-    'commands',
+    'apps.devices',
+    'apps.dashboards',
+    'apps.rules',
+    'apps.commands',
 ]
 
 # INSTALLED_APPS: Combinação de SHARED_APPS + TENANT_APPS
@@ -123,6 +123,7 @@ INSTALLED_APPS = list(set(SHARED_APPS + TENANT_APPS))
 
 # TENANT_MODEL: Model que representa um tenant
 # Deve herdar de TenantMixin
+# IMPORTANTE: Usar apenas app_label.ModelName (não 'apps.tenancy', mas 'tenancy')
 TENANT_MODEL = 'tenancy.Client'
 
 # TENANT_DOMAIN_MODEL: Model que mapeia domínios para tenants
@@ -186,9 +187,14 @@ WSGI_APPLICATION = 'core.wsgi.application'
 # DATABASE_URL: String de conexão PostgreSQL/TimescaleDB
 # Formato: postgresql://user:password@host:port/database
 # Exemplo: postgresql://postgres:postgres@db:5432/traksense
+# 
+# IMPORTANTE: django-tenants requer backend customizado
+# Use 'django_tenants.postgresql_backend' ao invés de 'django.db.backends.postgresql'
 DATABASES = {
     'default': env.db('DATABASE_URL', default='postgresql://postgres:postgres@localhost:5432/traksense')
 }
+# Sobrescrever ENGINE para django-tenants
+DATABASES['default']['ENGINE'] = 'django_tenants.postgresql_backend'
 
 # DATABASE_ROUTERS: Router customizado para django-tenants
 # Determina em qual schema criar/consultar tabelas

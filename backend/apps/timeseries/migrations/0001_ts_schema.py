@@ -237,6 +237,10 @@ class Migration(migrations.Migration):
 
     initial = True
     
+    # atomic = False: necessário para CREATE MATERIALIZED VIEW
+    # (operação DDL do PostgreSQL que não pode rodar em transação)
+    atomic = False
+    
     dependencies = []
 
     operations = [

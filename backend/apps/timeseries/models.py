@@ -51,38 +51,29 @@ SELECT add_compression_policy('public.ts_measure', INTERVAL '7 days');
 -- Retention
 SELECT add_retention_policy('public.ts_measure', INTERVAL '365 days');
 
-Acesso aos dados:
-----------------
-Use raw SQL (connection.cursor()) ou asyncpg (ingest):
+Como acessar dados:
+------------------
+Não use Django ORM! Use raw SQL ou asyncpg.
 
-# Via Django
-from django.db import connection
-with connection.cursor() as cur:
-    cur.execute("SET LOCAL app.tenant_id = %s", [tenant_id])
-    cur.execute("""
-        SELECT ts, v_num FROM public.ts_measure
-        WHERE device_id = %s AND point_id = %s
-        AND ts BETWEEN %s AND %s
-        ORDER BY ts DESC LIMIT 1000
-    """, [device_id, point_id, from_ts, to_ts])
-    rows = cur.fetchall()
+Exemplo 1 - Django raw SQL:
+    from django.db import connection
+    with connection.cursor() as cur:
+        cur.execute("SET LOCAL app.tenant_id = %s", [tenant_id])
+        cur.execute("SELECT * FROM public.ts_measure WHERE device_id = %s", [device_id])
+        rows = cur.fetchall()
 
-# Via asyncpg (ingest)
-async with pool.acquire() as conn:
-    await conn.execute("SET app.tenant_id = $1", tenant_id)
-    await conn.executemany(
-        "INSERT INTO public.ts_measure(tenant_id, device_id, point_id, ts, v_num, unit) "
-        "VALUES ($1, $2, $3, $4, $5, $6)",
-        rows
-    )
+Exemplo 2 - asyncpg (ingest):
+    async with pool.acquire() as conn:
+        await conn.execute("SET app.tenant_id = $1", tenant_id)
+        await conn.executemany(
+            "INSERT INTO public.ts_measure(...) VALUES (...)", rows
+        )
 
-Queries:
--------
-Ver views.py para exemplos de queries com agregação (1m/5m/1h).
-
-Migrações:
----------
-Ver migrations/0001_ts_schema.py para DDL completo.
+Ver também:
+----------
+- views.py: queries com agregação (1m/5m/1h)
+- dbutils.py: helpers (set_tenant_guc_for_conn, get_aggregate_view_name)
+- migrations/0001_ts_schema.py: DDL completo (hypertable, RLS, aggregates)
 
 Autor: TrakSense Team
 Data: 2025-10-07

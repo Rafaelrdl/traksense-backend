@@ -66,7 +66,7 @@ class TenancyConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     
     # Nome do app (deve corresponder ao diretório)
-    name = 'tenancy'
+    name = 'apps.tenancy'
     
     # Nome amigável (exibido no Django Admin)
     verbose_name = 'Multi-Tenancy'

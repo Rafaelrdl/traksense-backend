@@ -45,7 +45,7 @@ import uuid
 from datetime import datetime, timedelta
 from django.core.management.base import BaseCommand
 from django.db import connection
-from tenancy.models import Client, Domain
+from apps.tenancy.models import Client, Domain
 import random
 
 

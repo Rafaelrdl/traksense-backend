@@ -88,7 +88,7 @@ urlpatterns = [
     # Segurança:
     # - RLS (Row Level Security) via middleware TenantGucMiddleware
     # - Tenant isolado automaticamente por GUC (app.tenant_id)
-    path('', include('timeseries.urls')),
+    path('', include('apps.timeseries.urls')),
     
     # TODO (Fase 2): Adicionar rotas para:
     # path('api/', include('devices.urls')),      # CRUD devices/points
