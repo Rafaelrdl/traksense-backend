@@ -15,12 +15,25 @@ Fixtures:
    - Usado em testes de endpoints REST
    - Suporta autenticação (session, token, JWT)
 
+3. db_tenant (function):
+   - Helper para configurar tenant_id via GUC (SET LOCAL app.tenant_id)
+   - Garante isolamento de testes RLS
+
+4. reset_db (function):
+   - Limpa dados do banco após cada teste
+   - Garante isolamento entre testes
+
 Uso:
 ---
 # Em test files
 def test_example(django_db_setup, api_client):
     response = api_client.get('/health')
     assert response.status_code == 200
+
+# Com tenant específico
+def test_rls(db_tenant):
+    db_tenant.set('tenant-uuid-123')
+    # queries agora filtradas por RLS
 
 Executar testes:
 ---------------
@@ -36,11 +49,16 @@ pytest tests/test_rls_isolation.py -v
 # Paralelo (mais rápido)
 pytest -n auto
 
+# Apenas smoke tests
+pytest -m smoke
+
 Autor: TrakSense Team
 Data: 2025-10-07
 """
 import pytest
+import os
 from django.conf import settings
+from django.db import connection
 
 
 @pytest.fixture(scope='session')
@@ -78,3 +96,89 @@ def api_client():
     """
     from rest_framework.test import APIClient
     return APIClient()
+
+
+class TenantContextManager:
+    """Helper para gerenciar contexto de tenant em testes RLS."""
+    
+    def set(self, tenant_id: str):
+        """Define o tenant_id para a conexão atual."""
+        with connection.cursor() as cursor:
+            cursor.execute("SET LOCAL app.tenant_id = %s", [tenant_id])
+    
+    def clear(self):
+        """Remove o tenant_id da conexão atual."""
+        with connection.cursor() as cursor:
+            cursor.execute("RESET app.tenant_id")
+    
+    def get(self) -> str | None:
+        """Obtém o tenant_id atual."""
+        with connection.cursor() as cursor:
+            cursor.execute("SHOW app.tenant_id")
+            result = cursor.fetchone()
+            return result[0] if result else None
+
+
+@pytest.fixture
+def db_tenant(django_db_setup, db):
+    """
+    Helper para configurar tenant_id via GUC.
+    
+    Permite testar RLS (Row Level Security) de forma isolada.
+    
+    Example:
+        def test_tenant_isolation(db_tenant):
+            db_tenant.set('tenant-123')
+            # Queries agora retornam apenas dados do tenant-123
+            
+            db_tenant.clear()
+            # RLS bloqueia tudo (nenhum tenant configurado)
+    """
+    manager = TenantContextManager()
+    yield manager
+    # Cleanup: remover tenant após teste
+    manager.clear()
+
+
+@pytest.fixture(autouse=True)
+def reset_timezone():
+    """
+    Garante TZ=UTC para todos os testes (determinismo).
+    
+    Executado automaticamente antes de cada teste.
+    """
+    original_tz = os.environ.get('TZ')
+    os.environ['TZ'] = 'UTC'
+    
+    # Reinicializar timezone do Django
+    import time
+    time.tzset()
+    
+    yield
+    
+    # Restaurar TZ original
+    if original_tz:
+        os.environ['TZ'] = original_tz
+    else:
+        os.environ.pop('TZ', None)
+    time.tzset()
+
+
+@pytest.fixture
+def freezer():
+    """
+    Fixture para congelar tempo usando freezegun.
+    
+    Requer: pip install freezegun
+    
+    Example:
+        def test_with_time(freezer):
+            freezer.move_to('2025-01-01 00:00:00')
+            # código que depende de tempo
+    """
+    try:
+        from freezegun import freeze_time
+        with freeze_time('2025-01-01 00:00:00') as frozen:
+            yield frozen
+    except ImportError:
+        pytest.skip("freezegun não instalado")
