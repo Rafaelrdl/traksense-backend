@@ -181,7 +181,7 @@ def normalize_parsec_v1(payload: dict, tenant: str, site: str, device: str) -> N
     
     Returns:
         Tupla (timestamp, lista_de_pontos, metadata)
-        - timestamp: str ISO 8601
+        - timestamp: datetime object (não string!)
         - lista_de_pontos: [(nome, tipo, valor, unidade), ...]
         - metadata: dict com fw, src, etc.
     
@@ -189,8 +189,11 @@ def normalize_parsec_v1(payload: dict, tenant: str, site: str, device: str) -> N
         KeyError: Se campos obrigatórios estiverem faltando
         ValueError: Se valores forem inválidos
     """
-    # Extrair timestamp (obrigatório)
-    ts = payload["ts"]
+    from datetime import datetime
+    
+    # Extrair timestamp (obrigatório) e converter para datetime
+    ts_str = payload["ts"]
+    ts = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
     
     # Extrair digital inputs
     di1 = payload.get("di1", 0)

@@ -119,6 +119,16 @@ services:
       # Em produção: usar valor aleatório seguro e consistente
       - EMQX_NODE__COOKIE=traksense_cookie_dev
       
+      # Permitir acesso anônimo (sem autenticação) - DESENVOLVIMENTO APENAS
+      # Em produção, SEMPRE exigir autenticação por device!
+      # EMQX 5.x usa listeners.tcp.default.enable_authn para controlar autenticação
+      - EMQX_LISTENERS__TCP__DEFAULT__ENABLE_AUTHN=false
+      
+      # Desabilitar autorização (ACL) também - DESENVOLVIMENTO APENAS
+      # Permite publish/subscribe em qualquer tópico sem restrições
+      - EMQX_AUTHORIZATION__NO_MATCH=allow
+      - EMQX_AUTHORIZATION__SOURCES=[]
+      
       # NOTA: TLS está DESABILITADO no desenvolvimento
       # Para habilitar TLS em produção, adicionar:
       # - EMQX_LISTENERS__SSL__DEFAULT__ENABLED=true

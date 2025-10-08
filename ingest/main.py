@@ -41,7 +41,7 @@ from typing import List, Tuple, Any
 # Imports de terceiros
 import asyncpg
 import orjson
-from asyncio_mqtt import Client, MqttError
+from aiomqtt import Client, MqttError
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 # Imports locais
@@ -99,35 +99,52 @@ async def producer(queue: asyncio.Queue):
     Args:
         queue: Fila assíncrona compartilhada com o batcher
     """
-    # Parse MQTT URL
-    mqtt_host = cfg.mqtt_url.replace("mqtt://", "").split(":")[0]
-    mqtt_port = int(cfg.mqtt_url.split(":")[-1])
+    # Parse MQTT URL (formato: mqtt://host:port ou mqtt://host)
+    mqtt_url_clean = cfg.mqtt_url.replace("mqtt://", "").replace("mqtts://", "")
+    if ":" in mqtt_url_clean:
+        mqtt_host, mqtt_port_str = mqtt_url_clean.split(":", 1)
+        mqtt_port = int(mqtt_port_str)
+    else:
+        mqtt_host = mqtt_url_clean
+        mqtt_port = 1883  # Porta padrão MQTT
     
     logger.info(f"[PRODUCER] Conectando ao broker {mqtt_host}:{mqtt_port}")
     
+    # Configurar credenciais MQTT se fornecidas
+    client_kwargs = {"hostname": mqtt_host, "port": mqtt_port}
+    if cfg.mqtt_username:
+        client_kwargs["username"] = cfg.mqtt_username
+        client_kwargs["password"] = cfg.mqtt_password
+        logger.info(f"[PRODUCER] Usando autenticação: {cfg.mqtt_username}")
+    else:
+        logger.info("[PRODUCER] Modo anônimo (sem autenticação)")
+    
     while True:
         try:
-            async with Client(mqtt_host, mqtt_port) as client:
+            async with Client(**client_kwargs) as client:
                 # Subscrever tópicos
                 for topic in cfg.topics:
                     await client.subscribe(topic, qos=cfg.qos)
                     logger.info(f"[PRODUCER] Subscrito: {topic} (QoS={cfg.qos})")
                 
-                # Consumir mensagens
-                async with client.unfiltered_messages() as messages:
-                    async for msg in messages:
-                        # Parsear tópico: traksense/{tenant}/{site}/{device}/{kind}
-                        parts = msg.topic.split("/")
-                        if len(parts) != 5 or parts[0] != "traksense":
-                            logger.warning(f"[PRODUCER] Tópico inválido: {msg.topic}")
-                            MET_ERR.labels(reason="invalid_topic").inc()
-                            continue
-                        
-                        _, tenant, site, device, kind = parts
-                        
-                        # Enfileirar (bloqueia se fila estiver cheia - backpressure)
-                        await queue.put((tenant, site, device, kind, msg.payload))
-                        MET_QUEUE_SIZE.set(queue.qsize())
+                # Consumir mensagens (aiomqtt 2.x usa client.messages diretamente, sem context manager)
+                logger.info(f"[PRODUCER] Aguardando mensagens em {len(cfg.topics)} tópicos...")
+                async for msg in client.messages:
+                    # DEBUG: Log imediato ao receber
+                    logger.info(f"[PRODUCER] ✉️ Mensagem recebida: topic={msg.topic}, size={len(msg.payload)} bytes")
+                    
+                    # Parsear tópico: traksense/{tenant}/{site}/{device}/{kind}
+                    parts = msg.topic.value.split("/")
+                    if len(parts) != 5 or parts[0] != "traksense":
+                        logger.warning(f"[PRODUCER] Tópico inválido: {msg.topic}")
+                        MET_ERR.labels(reason="invalid_topic").inc()
+                        continue
+                    
+                    _, tenant, site, device, kind = parts
+                    
+                    # Enfileirar (bloqueia se fila estiver cheia - backpressure)
+                    await queue.put((tenant, site, device, kind, msg.payload))
+                    MET_QUEUE_SIZE.set(queue.qsize())
                         
         except MqttError as e:
             logger.error(f"[PRODUCER] Erro MQTT: {e}. Reconectando em 2s...")
@@ -225,8 +242,12 @@ async def flush(pool: asyncpg.Pool, buf: List[Tuple]):
                 if "schema" in data and data["schema"] == "v1":
                     # Validar com Pydantic
                     telem = TelemetryV1(**data)
-                    ts = telem.ts
-                    meta = telem.meta or {}
+                    # Converter timestamp ISO string para datetime
+                    from datetime import datetime
+                    import json
+                    ts = datetime.fromisoformat(telem.ts.replace('Z', '+00:00'))
+                    meta_dict = telem.meta or {}
+                    meta_json = json.dumps(meta_dict)  # asyncpg espera string JSON para jsonb
                     
                     for p in telem.points:
                         # Extrair valor tipado
@@ -236,7 +257,7 @@ async def flush(pool: asyncpg.Pool, buf: List[Tuple]):
                         
                         rows_ts.append((
                             tenant, device, p.name, ts,
-                            v_num, v_bool, v_text, p.u, meta
+                            v_num, v_bool, v_text, p.u, meta_json
                         ))
                         MET_POINTS.inc()
                     
@@ -245,7 +266,9 @@ async def flush(pool: asyncpg.Pool, buf: List[Tuple]):
                 else:
                     # Payload vendor-específico: usar adapter
                     # Exemplo: detectar vendor e chamar normalize_parsec_v1
-                    ts, points, meta = normalize_parsec_v1(data, tenant, site, device)
+                    import json
+                    ts, points, meta_dict = normalize_parsec_v1(data, tenant, site, device)
+                    meta_json = json.dumps(meta_dict)  # Serializar para JSON
                     
                     for (name, ptype, value, unit) in points:
                         v_num = value if isinstance(value, (int, float)) else None
@@ -254,7 +277,7 @@ async def flush(pool: asyncpg.Pool, buf: List[Tuple]):
                         
                         rows_ts.append((
                             tenant, device, name, ts,
-                            v_num, v_bool, v_text, unit, meta
+                            v_num, v_bool, v_text, unit, meta_json
                         ))
                         MET_POINTS.inc()
                     
@@ -331,35 +354,13 @@ async def main():
     
     Performance:
     -----------
-    - Batch insert de 10k registros por vez
-    - asyncpg.copy_records_to_table() para máxima velocidade
-    - Connection pool para DB (min=5, max=20)
+    - Batch insert por tamanho (800) ou tempo (250ms)
+    - asyncpg.executemany() para batches
+    - Connection pool para DB (min=2, max=8)
     - Sem bloqueios: totalmente assíncrono
     
     Raises:
         Exception: Qualquer erro de conexão ou processamento
-    """
-    print(f"[ingest] Conectando ao broker MQTT em {HOST}:{PORT}...")
-    
-    try:
-        # Cria conexão assíncrona com o broker MQTT
-        # Context manager garante desconexão limpa ao sair
-        async with aiomqtt.Client(hostname=HOST, port=PORT) as client:
-            print("[ingest] ✓ Conexão MQTT estabelecida com sucesso (ambiente dev)")
-            
-            # Mantém conexão por 1 segundo para verificar estabilidade
-            # Na versão de produção, aqui ficará o loop infinito de processamento
-            await asyncio.sleep(1)
-            
-            print("[ingest] ✓ Conexão verificada, encerrando graciosamente")
-            
-            # TODO (Fase 2): Substituir por loop infinito
-            # while True:
-            #     async with client.messages() as messages:
-            #         await client.subscribe("traksense/+/+/+/telem")
-            #         async for message in messages:
-            #             await process_message(message)
-            
     """
     # Instalar uvloop (se disponível)
     try:

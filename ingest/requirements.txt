@@ -14,8 +14,8 @@
 # ----------------------------------------------------------------------------
 # MQTT Client Assíncrono
 # ----------------------------------------------------------------------------
-# asyncio-mqtt: Cliente MQTT assíncrono para ingest de alta performance
-asyncio-mqtt>=0.16.2
+# aiomqtt: Cliente MQTT assíncrono para ingest de alta performance (novo nome do asyncio-mqtt)
+aiomqtt>=2.0.0
 
 # asyncpg: Driver PostgreSQL assíncrono nativo (mais rápido que psycopg)
 asyncpg>=0.29.0

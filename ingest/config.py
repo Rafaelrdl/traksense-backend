@@ -28,6 +28,8 @@ class Config:
     
     # MQTT Configuration
     mqtt_url: str = os.getenv("MQTT_URL", "mqtt://emqx:1883")
+    mqtt_username: str = os.getenv("MQTT_USERNAME", "")  # Vazio = anonymous
+    mqtt_password: str = os.getenv("MQTT_PASSWORD", "")
     topics: list[str] = None  # Processado no __post_init__
     qos: int = int(os.getenv("MQTT_QOS", "1"))
     
