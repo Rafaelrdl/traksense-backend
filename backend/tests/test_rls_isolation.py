@@ -29,7 +29,7 @@ Data: 2025-10-07
 import pytest
 import uuid
 from django.db import connection
-from tenancy.models import Client, Domain
+from apps.tenancy.models import Client, Domain
 
 
 @pytest.mark.django_db

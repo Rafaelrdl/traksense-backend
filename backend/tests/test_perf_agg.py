@@ -37,7 +37,7 @@ import uuid
 import time
 from datetime import datetime, timedelta
 from django.db import connection
-from tenancy.models import Client, Domain
+from apps.tenancy.models import Client, Domain
 
 
 @pytest.mark.django_db

@@ -57,6 +57,20 @@ Data: 2025-10-07
 """
 import pytest
 import os
+import sys
+from pathlib import Path
+
+# Adicionar o diretório backend ao PYTHONPATH
+backend_dir = Path(__file__).parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
+# Configurar Django ANTES de qualquer import
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
+
+import django
+django.setup()
+
 from django.conf import settings
 from django.db import connection
 
@@ -146,13 +160,16 @@ def reset_timezone():
     Garante TZ=UTC para todos os testes (determinismo).
     
     Executado automaticamente antes de cada teste.
+    Note: tzset() não está disponível no Windows, mas a configuração
+    de TZ=UTC via os.environ ainda funciona para Django.
     """
     original_tz = os.environ.get('TZ')
     os.environ['TZ'] = 'UTC'
     
-    # Reinicializar timezone do Django
+    # Reinicializar timezone do Django (tzset não existe no Windows)
     import time
-    time.tzset()
+    if hasattr(time, 'tzset'):
+        time.tzset()
     
     yield
     
@@ -161,7 +178,9 @@ def reset_timezone():
         os.environ['TZ'] = original_tz
     else:
         os.environ.pop('TZ', None)
-    time.tzset()
+    
+    if hasattr(time, 'tzset'):
+        time.tzset()
 
 
 @pytest.fixture
