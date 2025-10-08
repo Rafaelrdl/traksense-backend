@@ -286,9 +286,19 @@ async def flush(pool: asyncpg.Pool, buf: List[Tuple]):
             # ========== ACK DE COMANDO ==========
             elif kind == "ack":
                 ack = AckV1(**data)
+                # Converter ts_exec para datetime (se presente)
+                ts_exec_dt = None
+                if ack.ts_exec:
+                    from datetime import datetime
+                    ts_exec_dt = datetime.fromisoformat(ack.ts_exec.replace('Z', '+00:00'))
+                
+                # Serializar payload para JSON (asyncpg espera string para jsonb)
+                import json
+                payload_json = json.dumps(data)
+                
                 rows_ack.append((
                     tenant, device, ack.cmd_id, ack.ok,
-                    ack.ts_exec, data
+                    ts_exec_dt, payload_json
                 ))
                 MET_MSG.labels(type="ack").inc()
             
@@ -326,7 +336,7 @@ async def flush(pool: asyncpg.Pool, buf: List[Tuple]):
                   (tenant_id, device_id, cmd_id, ok, ts_exec, payload)
                 VALUES ($1, $2, $3, $4, $5, $6)
                 ON CONFLICT (tenant_id, device_id, cmd_id) DO UPDATE
-                SET ok=excluded.ok, ts_exec=excluded.ts_exec, payload=excluded.payload
+                SET ok=excluded.ok, ts_exec=excluded.ts_exec, payload=excluded.payload, updated_at=NOW()
             """, rows_ack)
             logger.info(f"[FLUSH] Inseridos {len(rows_ack)} ACKs")
         

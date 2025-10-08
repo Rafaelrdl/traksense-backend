@@ -492,7 +492,23 @@ curl -s http://localhost:9100/metrics | grep ingest_errors_total
 ingest_errors_total{reason="parse_error"} 3.0
 ```
 
-**Status:** ⬜ PENDENTE
+**Status:** ✅ **COMPLETO** (2025-10-08 01:28 BRT)
+
+**Resultado Real:**
+```
+# Banco (DLQ) - 3 erros capturados:
+1. {invalid json syntax, missing quotes} → "unexpected character: line 1 column 2 (char 1)"
+2. {"schema": "v1", "points": [...]} (sem 'ts') → "Field required [type=missing]"
+3. {"schema": "v1", "ts": "not-a-valid-timestamp", "points": "not-a-list"} → "Input should be a valid list [type=list_type]"
+
+# Métrica:
+ingest_errors_total{reason="parse_error"} 3.0 ✅
+
+# Logs:
+[FLUSH] Erro ao processar: unexpected character: line 1 column 2 (char 1)
+[FLUSH] 1 payloads enviados para DLQ
+(repetido para os 3 erros)
+```
 
 ---
 
@@ -502,11 +518,11 @@ ingest_errors_total{reason="parse_error"} 3.0
 
 **Checklist:**
 
-- [ ] 6.1. Publicar ACK com `cmd_id` único (1ª vez)
-- [ ] 6.2. Publicar ACK com mesmo `cmd_id` (2ª vez)
-- [ ] 6.3. Publicar ACK com mesmo `cmd_id` (3ª vez)
-- [ ] 6.4. Verificar que há apenas 1 registro no banco
-- [ ] 6.5. Coluna `updated_at` foi atualizada
+- [x] 6.1. Publicar ACK com `cmd_id` único (1ª vez) ✅
+- [x] 6.2. Publicar ACK com mesmo `cmd_id` (2ª vez) ✅
+- [x] 6.3. Publicar ACK com mesmo `cmd_id` (3ª vez) ✅
+- [x] 6.4. Verificar que há apenas 1 registro no banco ✅
+- [x] 6.5. Coluna `updated_at` foi atualizada ✅
 
 **Script de Teste:**
 
@@ -575,7 +591,24 @@ WHERE tenant_id = 'test_alpha'
 
 **✅ Apenas 1 registro, mesmo com 3 publicações!**
 
-**Status:** ⬜ PENDENTE
+**Status:** ✅ **COMPLETO** (2025-10-08 01:41 BRT)
+
+**Resultado Real:**
+```
+ count |         first_insert          |          last_update          
+-------+-------------------------------+-------------------------------
+     1 | 2025-10-08 04:41:21.762704+00 | 2025-10-08 04:41:22.763022+00
+(1 row)
+
+✅ Apenas 1 registro no banco (count=1)
+✅ updated_at foi atualizado (~1 segundo depois de created_at)
+✅ UPSERT funcionando via ON CONFLICT (tenant_id, device_id, cmd_id)
+```
+
+**Correções Realizadas:**
+1. Conversão de `ts_exec` de string para datetime
+2. Serialização de `payload` dict para JSON string
+3. Adição de `updated_at=NOW()` no ON CONFLICT DO UPDATE
 
 ---
 
@@ -964,8 +997,8 @@ VALIDAÇÃO FASE 4 - Ingest Assíncrono
 | Conectividade MQTT | Conecta e subscreve | Conecta + reconecta auto | ✅ |
 | Payload normalizado | Persistido corretamente | 3 pontos inseridos | ✅ |
 | Payload vendor (parsec) | Normalizado e persistido | 3 pontos (status, fault, rssi) | ✅ |
-| DLQ (payloads inválidos) | Capturados com motivo | - | ⬜ |
-| ACKs idempotentes | 1 registro (UPSERT) | - | ⬜ |
+| DLQ (payloads inválidos) | Capturados com motivo | 3 erros capturados (JSON, campo ausente, tipo errado) | ✅ |
+| ACKs idempotentes | 1 registro (UPSERT) | 1 registro (3 pubs), updated_at atualizado | ✅ |
 | Throughput | ≥5,000 p/s | - | ⬜ |
 | Latência p50 | ≤1.0s | - | ⬜ |
 | Out-of-order timestamps | Aceitos sem erro | - | ⬜ |
@@ -973,7 +1006,7 @@ VALIDAÇÃO FASE 4 - Ingest Assíncrono
 | Métricas Prometheus | Todas expostas | 6 métricas OK | ✅ |
 | Validação automatizada | 5/5 checks OK | - | ⬜ |
 
-**Progresso:** 5/12 passos completos (41.7%)
+**Progresso:** 6/12 passos completos (50%)
 
 ---
 
