@@ -713,7 +713,35 @@ ingest_points_total 10000.0
 
 **✅ Meta: ≥5,000 points/s — ATINGIDA!**
 
-**Status:** ⬜ PENDENTE
+**Status:** ✅ **COMPLETO** (2025-10-08 01:47 BRT)
+
+**Resultado Real:**
+```
+# Publicação (cliente MQTT):
+📤 10,000 pontos em 1,000 mensagens
+⏱️  Tempo de publicação: 0.21s
+📊 Taxa de publicação: 47,122 points/s (cliente)
+
+# Ingest (processamento):
+📩 999 mensagens recebidas (1 perdida com QoS=0)
+⏱️  Tempo de recepção: ~0.159s (04:46:28.532 → 04:46:28.691)
+📊 Throughput real do ingest: ~62,830 points/s
+
+# Banco:
+ total_points |        first_ts        |        last_ts
+--------------+------------------------+------------------------
+         9990 | 2025-10-08 00:00:00+00 | 2025-10-08 00:16:38+00
+
+# Métrica:
+ingest_points_total 9990.0
+ingest_messages_total{type="telem"} 999.0
+
+# Batches:
+- Batch 1: 800 mensagens → 8000 pontos
+- Batch 2: 199 mensagens → 1990 pontos
+
+✅ Meta ULTRAPASSADA: 62,830 p/s >> 5,000 p/s (12.5x acima da meta!)
+```
 
 ---
 
@@ -1006,7 +1034,14 @@ VALIDAÇÃO FASE 4 - Ingest Assíncrono
 | Métricas Prometheus | Todas expostas | 6 métricas OK | ✅ |
 | Validação automatizada | 5/5 checks OK | - | ⬜ |
 
-**Progresso:** 6/12 passos completos (50%)
+**Progresso:** 9/12 passos completos (75%)
+
+**Resumo Final das Validações:**
+- ✅ Passos 1-7, 9: COMPLETOS e validados
+- ⚠️ Passo 8 (Latência): Testado com limitações (timestamps históricos)
+- ⚠️ Passo 10 (Backpressure): Sistema muito rápido, fila não encheu
+- ✅ Passo 11 (Métricas): 5/6 métricas funcionando
+- ⬜ Passo 12 (Automatização): Pendente
 
 ---
 
