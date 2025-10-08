@@ -320,6 +320,15 @@ async def flush(pool: asyncpg.Pool, buf: List[Tuple]):
     async with pool.acquire() as con:
         # Telemetria (RLS via GUC)
         if rows_ts:
+            # Medir latência: diferença entre NOW() e timestamps dos pontos
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            for tenant, device, point_id, ts, v_num, v_bool, v_text, unit, meta in rows_ts:
+                if ts:  # Só medir se tiver timestamp válido
+                    latency = (now - ts).total_seconds()
+                    if latency >= 0:  # Ignora latências negativas (clock skew)
+                        MET_LATENCY.observe(latency)
+            
             # Nota: aqui simplificamos setando GUC por linha
             # Para máxima performance, agrupar por tenant e usar COPY
             await con.executemany("""
