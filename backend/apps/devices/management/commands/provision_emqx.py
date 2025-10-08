@@ -109,12 +109,6 @@ class Command(BaseCommand):
             action='store_true',
             help='Exibir saída em formato JSON (para scripting)'
         )
-        
-        parser.add_argument(
-            '--no-color',
-            action='store_true',
-            help='Desabilitar cores na saída (para logs)'
-        )
     
     def handle(self, *args, **options):
         """
@@ -131,16 +125,6 @@ class Command(BaseCommand):
         site_slug = options['site_slug']
         password_length = options['password_length']
         json_output = options['json']
-        no_color = options['no_color']
-        
-        # Desabilitar cores se solicitado
-        if no_color:
-            self.style = type('obj', (object,), {
-                'SUCCESS': lambda x: x,
-                'WARNING': lambda x: x,
-                'ERROR': lambda x: x,
-                'NOTICE': lambda x: x,
-            })()
         
         # Buscar Device
         try:
@@ -148,10 +132,13 @@ class Command(BaseCommand):
         except Device.DoesNotExist:
             raise CommandError(f"❌ Device não encontrado: {device_id}")
         
+        from django.db import connection
+        tenant_schema = connection.schema_name
+        
         self.stdout.write(
             f"Provisionando Device {device.id} ({device.name}) no EMQX..."
         )
-        self.stdout.write(f"  Tenant: {device.tenant_id}")
+        self.stdout.write(f"  Tenant: {tenant_schema}")
         self.stdout.write(f"  Template: {device.template.code} v{device.template.version}")
         self.stdout.write(f"  Site: {site_slug}")
         self.stdout.write("")

@@ -92,3 +92,29 @@ pytest-django>=4.7
 # - Mensagens de erro detalhadas
 # Docs: https://python-jsonschema.readthedocs.io/
 jsonschema>=4.22
+
+# ----------------------------------------------------------------------------
+# HTTP Client Library (EMQX Management API)
+# ----------------------------------------------------------------------------
+# requests: Biblioteca HTTP simples e elegante
+# - Usado para comunicação com EMQX Management API (provisioning)
+# - Retry automático com exponential backoff (via urllib3)
+# - Suporte a autenticação Basic/Bearer
+# Docs: https://requests.readthedocs.io/
+requests>=2.31.0
+
+# urllib3: Dependência do requests, necessária para Retry strategy
+# - Configuração de retry/backoff em EmqxHttpProvisioner
+# - Pool de conexões persistentes
+# Docs: https://urllib3.readthedocs.io/
+urllib3>=2.0.0
+
+# ----------------------------------------------------------------------------
+# MQTT Client Library (Testes e Validação)
+# ----------------------------------------------------------------------------
+# paho-mqtt: Cliente MQTT oficial Eclipse
+# - Usado para testes de integração (publish/subscribe/ACL)
+# - Suporte MQTT v3.1.1 e v5.0
+# - Last Will Testament (LWT), QoS 0/1/2
+# Docs: https://www.eclipse.org/paho/index.php?page=clients/python/docs/index.php
+paho-mqtt>=2.0.0

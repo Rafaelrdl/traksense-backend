@@ -234,11 +234,15 @@ def provision_emqx_for_device(
     if password_length < 16:
         raise ValueError(f"password_length deve ser >= 16 (fornecido: {password_length})")
     
+    # Obter tenant do connection (multi-tenancy por schema)
+    from django.db import connection
+    tenant_schema = connection.schema_name
+    
     # Gerar credenciais
-    username = f"t:{device.tenant_id}:d:{device.id}"
+    username = f"t:{tenant_schema}:d:{device.id}"
     password = secrets.token_urlsafe(password_length)
     client_id = generate_client_id(
-        tenant_id=str(device.tenant_id),
+        tenant_id=tenant_schema,
         site_slug=site_slug,
         device_id=str(device.id)
     )
@@ -253,11 +257,11 @@ def provision_emqx_for_device(
     provisioner = get_provisioner()
     
     # Montar topic_base
-    topic_base = f"traksense/{device.tenant_id}/{site_slug}/{device.id}"
+    topic_base = f"traksense/{tenant_schema}/{site_slug}/{device.id}"
     
     logger.info(
         f"Iniciando provisionamento EMQX para Device {device.id} "
-        f"(tenant={device.tenant_id}, site={site_slug})"
+        f"(tenant={tenant_schema}, site={site_slug})"
     )
     
     try:
@@ -268,7 +272,7 @@ def provision_emqx_for_device(
         # 2) Configurar ACL mínima
         provisioner.set_acl(
             creds,
-            tenant=str(device.tenant_id),
+            tenant=tenant_schema,
             site=site_slug,
             device=str(device.id)
         )
