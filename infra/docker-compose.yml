@@ -313,31 +313,40 @@ services:
     #   retries: 3
 
   # --------------------------------------------------------------------------
-  # Ingest Service - Ingestão de Dados IoT
+  # Ingest Service - Ingestão Assíncrona (Fase 4)
   # --------------------------------------------------------------------------
-  # Serviço Python assíncrono para consumir mensagens MQTT e
-  # persistir no TimescaleDB com isolamento multi-tenant (RLS).
+  # Serviço Python assíncrono de alta performance para ingestão de dados IoT.
   #
-  # Fluxo:
-  # 1. Subscribe: traksense/+/+/+/telem (wildcard)
-  # 2. Parse topic: extrair tenant/site/device
-  # 3. Validate: usar adapter Pydantic (parsec_v1, etc.)
-  # 4. Normalize: converter para envelope padrão
-  # 5. Buffer: acumular até atingir batch size (10k)
-  # 6. Set GUC: app.tenant_id = <tenant_uuid> (RLS)
-  # 7. Batch Insert: asyncpg.copy_records_to_table()
-  # 8. ACK: confirmar processamento
+  # Responsabilidades (Fase 4):
+  # - Consumir mensagens MQTT (tópicos: /telem, /ack, /event)
+  # - Validar payloads com Pydantic (TelemetryV1, AckV1, EventV1)
+  # - Normalizar payloads vendor-específicos (adapter parsec_v1)
+  # - Persistir em lote no TimescaleDB (batch insert com RLS)
+  # - Enviar payloads inválidos para DLQ (Dead Letter Queue)
+  # - Garantir idempotência de ACKs (cmd_id único via UPSERT)
+  # - Expor métricas Prometheus em :9100/metrics
   #
-  # Performance:
-  # - Totalmente assíncrono (asyncio)
-  # - Batch inserts de 10k registros
-  # - Connection pool asyncpg
-  # - Zero bloqueios (non-blocking I/O)
+  # Features:
+  # - Producer/Consumer pattern com asyncio.Queue
+  # - Batching inteligente (por tamanho OU tempo)
+  # - Backpressure automática (maxsize na Queue)
+  # - Reconexão MQTT automática com retry
+  # - uvloop para máxima performance (Linux/macOS)
+  # - Connection pool asyncpg (min/max configurável)
   #
-  # Error Handling:
-  # - Payload inválido -> DLQ (ingest_errors table)
-  # - Reconexão MQTT com backoff exponencial
-  # - Retry de DB com policy configurável
+  # Performance Targets (Dev):
+  # - Throughput: ≥5k points/s
+  # - Latência p50: ≤1s (device ts → persisted)
+  # - CPU: ≤200% por container
+  # - Memória: ~256MB
+  #
+  # Métricas Expostas:
+  # - ingest_messages_total (counter) - Total de mensagens MQTT recebidas
+  # - ingest_points_total (counter) - Total de pontos de telemetria processados
+  # - ingest_errors_total (counter) - Total de erros por motivo
+  # - ingest_batch_size (histogram) - Distribuição de tamanhos de batch
+  # - ingest_latency_seconds (histogram) - Latência de ingest (p50/p95/p99)
+  # - ingest_queue_size (gauge) - Tamanho atual da fila interna
   ingest:
     # Build da imagem a partir do Dockerfile em ../ingest
     build: ../ingest
@@ -345,28 +354,48 @@ services:
     container_name: ingest
     
     # Carrega variáveis de ambiente do arquivo .env.ingest
-    # Contém: MQTT_URL, DATABASE_URL, BATCH_SIZE, etc.
+    # Contém: MQTT_URL, DATABASE_URL, BATCH_SIZE, BATCH_MS, etc.
     env_file:
       - .env.ingest
+    
+    # Porta 9100: Métricas Prometheus
+    # Acesso: http://localhost:9100/metrics
+    ports:
+      - "9100:9100"
     
     # Dependências: aguarda EMQX e DB
     depends_on: [emqx, db]
     
     networks: [app-net]
     
-    # TODO (Produção):
-    # restart: unless-stopped
+    # Restart automático em caso de falha
+    restart: unless-stopped
+    
+    # Health check: verifica se métricas estão acessíveis
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9100/metrics')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    
+    # Logs: limitar para não encher disco
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Limites de recursos (ajustar em produção)
     # deploy:
-    #   replicas: 2  # Escalar horizontalmente
+    #   replicas: 2  # Escalar horizontalmente (shared subscription MQTT)
     #   resources:
     #     limits:
     #       memory: 512M
-    #       cpus: '1'
-    # healthcheck:
-    #   test: ["CMD", "python", "-c", "import socket; ..."]
-    #   interval: 30s
-    #   timeout: 5s
-    #   retries: 3
+    #       cpus: '2.0'
+    #     reservations:
+    #       memory: 256M
+    #       cpus: '0.5'
 
   # --------------------------------------------------------------------------
   # Frontend (React/Vite) - DESLIGADO POR PADRÃO

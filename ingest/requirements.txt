@@ -14,6 +14,28 @@
 # ----------------------------------------------------------------------------
 # MQTT Client Assíncrono
 # ----------------------------------------------------------------------------
+# asyncio-mqtt: Cliente MQTT assíncrono para ingest de alta performance
+asyncio-mqtt>=0.16.2
+
+# asyncpg: Driver PostgreSQL assíncrono nativo (mais rápido que psycopg)
+asyncpg>=0.29.0
+
+# Pydantic: Validação de schemas de payload
+pydantic>=2.8.0
+
+# orjson: JSON parser/serializer ultra-rápido (C extension)
+orjson>=0.10.0
+
+# Prometheus client: Métricas de observabilidade
+prometheus-client>=0.20.0
+
+# uvloop: Event loop otimizado (substituir asyncio padrão em prod)
+# Apenas para Linux/macOS (não compatível com Windows)
+uvloop>=0.19.0 ; sys_platform != "win32"
+
+# ----------------------------------------------------------------------------
+# Dependências Originais (mantidas para compatibilidade)
+# ----------------------------------------------------------------------------
 # aiomqtt: Cliente MQTT moderno e assíncrono baseado em paho-mqtt
 # - Suporte completo a asyncio/await
 # - Substitui asyncio-mqtt (deprecated)

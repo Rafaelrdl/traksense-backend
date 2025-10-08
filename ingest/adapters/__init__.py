@@ -15,7 +15,7 @@ Fluxo:
     [Device Parsec] ---> payload_parsec.json
                               |
                               v
-                    [parsec_v1.py adapter]
+                    [normalize_parsec_v1()]
                               |
                               v (valida e normaliza)
                     envelope_padrao.json
@@ -152,3 +152,85 @@ Data: 2025-10-07
 #         raise ValueError(f"Adapter '{adapter_id}' não encontrado")
 #     return ADAPTER_REGISTRY[adapter_id]
 # ============================================================================
+
+
+# ============================================================================
+# Função normalize_parsec_v1 (Fase 4 - Ingest Assíncrono)
+# ============================================================================
+from .types import Normalized
+
+
+def normalize_parsec_v1(payload: dict, tenant: str, site: str, device: str) -> Normalized:
+    """
+    Normaliza payload do inversor Parsec v1 para formato interno.
+    
+    Payload esperado (exemplo):
+    {
+        "di1": 1,        # Digital Input 1: 1=RUN, 0=STOP
+        "di2": 0,        # Digital Input 2: 1=FAULT, 0=OK
+        "rssi": -68,     # Sinal WiFi (dBm)
+        "fw": "1.2.3",   # Versão do firmware
+        "ts": "2025-10-07T15:30:00Z"
+    }
+    
+    Args:
+        payload: Dicionário do payload bruto
+        tenant: ID do tenant
+        site: ID do site
+        device: ID do device
+    
+    Returns:
+        Tupla (timestamp, lista_de_pontos, metadata)
+        - timestamp: str ISO 8601
+        - lista_de_pontos: [(nome, tipo, valor, unidade), ...]
+        - metadata: dict com fw, src, etc.
+    
+    Raises:
+        KeyError: Se campos obrigatórios estiverem faltando
+        ValueError: Se valores forem inválidos
+    """
+    # Extrair timestamp (obrigatório)
+    ts = payload["ts"]
+    
+    # Extrair digital inputs
+    di1 = payload.get("di1", 0)
+    di2 = payload.get("di2", 0)
+    
+    # Mapear DI1 para status (enum)
+    status = "RUN" if di1 == 1 else "STOP"
+    
+    # Mapear DI2 para fault (bool)
+    fault = bool(di2 == 1)
+    
+    # Extrair RSSI (sinal WiFi)
+    rssi = payload.get("rssi")
+    
+    # Montar lista de pontos normalizados
+    # Formato: (nome, tipo, valor, unidade)
+    points = [
+        ("status", "enum", status, None),
+        ("fault", "bool", fault, None),
+    ]
+    
+    # Adicionar RSSI se presente
+    if rssi is not None:
+        points.append(("rssi", "num", rssi, "dBm"))
+    
+    # Metadata adicional
+    meta = {
+        "fw": payload.get("fw"),
+        "src": "parsec_v1",
+        "tenant": tenant,
+        "site": site,
+        "device": device
+    }
+    
+    return ts, points, meta
+
+
+# ============================================================================
+# Exports
+# ============================================================================
+__all__ = [
+    "normalize_parsec_v1",  # Fase 4
+]
