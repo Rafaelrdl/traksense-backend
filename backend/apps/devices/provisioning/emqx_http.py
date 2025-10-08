@@ -124,15 +124,20 @@ class EmqxHttpProvisioner(EmqxProvisioner):
     
     def _create_session(self) -> requests.Session:
         """
-        Cria sessão HTTP com retry automático e autenticação básica.
+        Cria sessão HTTP com retry automático e autenticação JWT (Bearer Token).
+        
+        EMQX v5 requer JWT token obtido via /api/v5/login ao invés de Basic Auth.
         
         Returns:
             Sessão configurada com retry policy e auth
         """
         session = requests.Session()
         
-        # Autenticação básica (admin do EMQX)
-        session.auth = (self.admin_user, self.admin_pass)
+        # Obter JWT token via login
+        token = self._get_jwt_token()
+        
+        # Configurar Bearer Token para todas as requisições
+        session.headers.update({'Authorization': f'Bearer {token}'})
         
         # Retry strategy: 3 tentativas com backoff exponencial
         retry_strategy = Retry(
@@ -147,6 +152,54 @@ class EmqxHttpProvisioner(EmqxProvisioner):
         session.mount("https://", adapter)
         
         return session
+    
+    def _get_jwt_token(self) -> str:
+        """
+        Obtém JWT token via endpoint /api/v5/login.
+        
+        EMQX v5 requer este token para acessar a Management API.
+        
+        Returns:
+            JWT token (string)
+            
+        Raises:
+            EmqxAuthenticationError: Se credenciais admin estiverem incorretas
+            EmqxConnectionError: Se não conseguir conectar no EMQX
+        """
+        login_url = f"{self.base_url}/api/v5/login"
+        payload = {
+            "username": self.admin_user,
+            "password": self.admin_pass
+        }
+        
+        try:
+            logger.info(f"Obtendo JWT token via {login_url}")
+            response = requests.post(
+                login_url,
+                json=payload,
+                timeout=self.timeout,
+                headers={'Content-Type': 'application/json'}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                token = data.get('token')
+                if not token:
+                    raise EmqxAuthenticationError("Token não retornado pela API de login")
+                logger.info("✅ JWT token obtido com sucesso")
+                return token
+            elif response.status_code == 401:
+                raise EmqxAuthenticationError(
+                    f"Credenciais admin inválidas: {self.admin_user} "
+                    f"(verifique EMQX_ADMIN_USER/PASS)"
+                )
+            else:
+                raise EmqxConnectionError(
+                    f"Erro ao fazer login: HTTP {response.status_code} - {response.text}"
+                )
+                
+        except requests.exceptions.RequestException as e:
+            raise EmqxConnectionError(f"Falha ao conectar no EMQX: {e}") from e
     
     def _make_request(
         self,
@@ -321,64 +374,55 @@ class EmqxHttpProvisioner(EmqxProvisioner):
             {"action": "subscribe", "permission": "allow", "topic": f"{topic_base}/cmd"},
         ]
         
-        # 3. Criar regras no EMQX
-        for rule in rules:
-            payload = {
-                "username": creds.username,
-                "action": rule["action"],
-                "permission": rule["permission"],
-                "topic": rule["topic"],
-            }
-            
-            try:
-                self._make_request(
-                    method="POST",
-                    endpoint="/api/v5/authorization/sources/built_in_database/rules",
-                    json_data=payload,
-                    expected_status=201,  # Created
-                )
-                logger.debug(f"✅ ACL criada: {rule['action']} {rule['topic']}")
-            
-            except EmqxConflictError:
-                # Regra já existe → ignorar (idempotência)
-                logger.debug(f"⚠️ ACL já existe: {rule['action']} {rule['topic']}")
+        # 3. Criar todas as regras em uma única requisição (batch)
+        # EMQX 5.8 usa /rules/users com array de regras por username
+        payload = [{
+            "username": creds.username,
+            "rules": rules  # Array de regras para este username
+        }]
         
-        logger.info(
-            f"✅ ACL configurada para {creds.username}: {len(rules)} regras "
-            f"(5 publish, 1 subscribe) no prefixo {topic_base}"
-        )
+        try:
+            self._make_request(
+                method="POST",
+                endpoint="/api/v5/authorization/sources/built_in_database/rules/users",
+                json_data=payload,
+                expected_status=204,  # No Content (sucesso sem retorno)
+            )
+            logger.info(
+                f"✅ ACL configurada para {creds.username}: {len(rules)} regras "
+                f"(5 publish, 1 subscribe) no prefixo {topic_base}"
+            )
+        
+        except EmqxConflictError:
+            # Regras já existem → ignorar (idempotência)
+            logger.warning(f"⚠️ ACLs já existem para {creds.username}, mantendo existentes")
+        except EmqxProvisioningError as e:
+            logger.error(f"❌ Falha ao criar ACLs para {creds.username}: {e}")
+            raise
     
     def _delete_acl(self, username: str) -> None:
         """
         Remove todas as ACLs de um usuário.
         
+        EMQX 5.8 usa DELETE /rules/users/{username} para remover todas as regras de um user.
+        
         Args:
             username: Username do dispositivo
         """
         try:
-            # Obter regras existentes
-            response = self._make_request(
-                method="GET",
-                endpoint=f"/api/v5/authorization/sources/built_in_database/rules?username={username}",
-                expected_status=200,
+            # DELETE /rules/users/{username} remove todas as regras deste user
+            self._make_request(
+                method="DELETE",
+                endpoint=f"/api/v5/authorization/sources/built_in_database/rules/users/{username}",
+                expected_status=204,  # No Content
             )
-            
-            rules = response.get("data", [])
-            
-            # Deletar cada regra
-            for rule in rules:
-                rule_id = rule.get("id")
-                if rule_id:
-                    self._make_request(
-                        method="DELETE",
-                        endpoint=f"/api/v5/authorization/sources/built_in_database/rules/{rule_id}",
-                        expected_status=204,  # No Content
-                    )
-                    logger.debug(f"🗑️ ACL removida: {rule_id}")
+            logger.debug(f"🗑️ ACLs removidas para: {username}")
         
         except EmqxProvisioningError as e:
             # Ignorar erros ao deletar ACLs antigas (melhor esforço)
-            logger.warning(f"⚠️ Falha ao remover ACLs antigas de {username}: {e}")
+            # 404 significa que não há regras (OK)
+            if "404" not in str(e):
+                logger.warning(f"⚠️ Falha ao remover ACLs antigas de {username}: {e}")
     
     def delete_user(self, username: str) -> None:
         """
