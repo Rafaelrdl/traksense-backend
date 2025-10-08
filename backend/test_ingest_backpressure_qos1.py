@@ -19,8 +19,11 @@ from datetime import datetime, timezone
 # Configuração
 MQTT_HOST = 'emqx'  # Nome do container no docker-compose
 MQTT_PORT = 1883
-TOPIC_BASE = 'traksense/acme/site01'
+# Usar UUID válido para tenant
+TENANT_UUID = '11111111-1111-1111-1111-111111111111'
+SITE_ID = 'site01'
 DEVICE_ID = '55555555-5555-5555-5555-555555555555'
+TOPIC_BASE = f'traksense/{TENANT_UUID}/{SITE_ID}'
 METRICS_URL = 'http://ingest:9100/metrics'  # Nome do container
 
 # Parâmetros do teste

@@ -327,7 +327,7 @@ async def flush(pool: asyncpg.Pool, buf: List[Tuple]):
                 if ts:  # Só medir se tiver timestamp válido
                     latency = (now - ts).total_seconds()
                     if latency >= 0:  # Ignora latências negativas (clock skew)
-                        MET_LATENCY.observe(latency)
+                        MET_LAT.observe(latency)
             
             # Nota: aqui simplificamos setando GUC por linha
             # Para máxima performance, agrupar por tenant e usar COPY
