@@ -1,0 +1,12 @@
+{
+  "mqtt": {
+    "host": "localhost",
+    "port": 1883,
+    "username": "t:demo:d:inv-01",
+    "password": "SUBSTITUA_COM_SENHA_REAL"
+  },
+  "device": {
+    "name": "INV-01",
+    "topic_base": "traksense/demo/plant-01/inv-01"
+  }
+}

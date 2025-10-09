@@ -264,24 +264,58 @@ async def flush(pool: asyncpg.Pool, buf: List[Tuple]):
                     MET_MSG.labels(type="telem").inc()
                     
                 else:
-                    # Payload vendor-específico: usar adapter
-                    # Exemplo: detectar vendor e chamar normalize_parsec_v1
+                    # Payload vendor-específico: usar adapter apropriado
                     import json
-                    ts, points, meta_dict = normalize_parsec_v1(data, tenant, site, device)
-                    meta_json = json.dumps(meta_dict)  # Serializar para JSON
                     
-                    for (name, ptype, value, unit) in points:
-                        v_num = value if isinstance(value, (int, float)) else None
-                        v_bool = value if isinstance(value, bool) else None
-                        v_text = str(value) if isinstance(value, str) else None
+                    # Detectar protocolo JE02 por chave "DATA" ou "INFO"
+                    if "DATA" in data:
+                        # Adapter JE02 - Payload DATA
+                        from adapters import adapt_je02_data
+                        ts, points, meta_dict = adapt_je02_data(data)
+                        meta_json = json.dumps(meta_dict)
                         
-                        rows_ts.append((
-                            tenant, device, name, ts,
-                            v_num, v_bool, v_text, unit, meta_json
-                        ))
-                        MET_POINTS.inc()
+                        for (name, ptype, value, unit) in points:
+                            v_num = value if isinstance(value, (int, float)) else None
+                            v_bool = value if isinstance(value, bool) else None
+                            v_text = str(value) if isinstance(value, str) else None
+                            
+                            rows_ts.append((
+                                tenant, device, name, ts,
+                                v_num, v_bool, v_text, unit, meta_json
+                            ))
+                            MET_POINTS.inc()
+                        
+                        MET_MSG.labels(type="telem_je02").inc()
                     
-                    MET_MSG.labels(type="telem").inc()
+                    elif "INFO" in data:
+                        # Adapter JE02 - Payload INFO (metadata apenas, sem telemetria)
+                        from adapters import adapt_je02_info
+                        meta_dict = adapt_je02_info(data)
+                        meta_json = json.dumps(meta_dict)
+                        
+                        # INFO não gera pontos de telemetria, apenas metadados
+                        # Pode ser usado para atualizar metadados do device
+                        # Por enquanto apenas logamos
+                        logger.info(f"[FLUSH] INFO recebido para device {device}: {meta_dict}")
+                        MET_MSG.labels(type="info_je02").inc()
+                    
+                    else:
+                        # Fallback: tentar Parsec v1
+                        ts, points, meta_dict = normalize_parsec_v1(data, tenant, site, device)
+                        meta_json = json.dumps(meta_dict)
+                        
+                        for (name, ptype, value, unit) in points:
+                            v_num = value if isinstance(value, (int, float)) else None
+                            v_bool = value if isinstance(value, bool) else None
+                            v_text = str(value) if isinstance(value, str) else None
+                            
+                            rows_ts.append((
+                                tenant, device, name, ts,
+                                v_num, v_bool, v_text, unit, meta_json
+                            ))
+                            MET_POINTS.inc()
+                        
+                        MET_MSG.labels(type="telem_parsec").inc()
             
             # ========== ACK DE COMANDO ==========
             elif kind == "ack":

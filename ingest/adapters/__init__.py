@@ -232,8 +232,16 @@ def normalize_parsec_v1(payload: dict, tenant: str, site: str, device: str) -> N
 
 
 # ============================================================================
+# Função adapt_je02_data (Fase D - JE02 Protocol)
+# ============================================================================
+from .je02_v1 import adapt_je02_data, adapt_je02_info
+
+
+# ============================================================================
 # Exports
 # ============================================================================
 __all__ = [
     "normalize_parsec_v1",  # Fase 4
+    "adapt_je02_data",      # Fase D - JE02 DATA
+    "adapt_je02_info",      # Fase D - JE02 INFO
 ]
