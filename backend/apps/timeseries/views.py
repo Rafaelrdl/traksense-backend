@@ -62,6 +62,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
+from drf_spectacular.types import OpenApiTypes
 from .dbutils import get_aggregate_view_name, get_current_tenant_id
 
 logger = logging.getLogger(__name__)
@@ -252,6 +254,38 @@ def data_points(request):
         )
 
 
+@extend_schema(
+    tags=['Health'],
+    summary='Health check do sistema de telemetria',
+    description='''
+Verifica a integridade do sistema de telemetria (TimescaleDB + RLS).
+
+## ✅ Verificações
+
+1. **RLS habilitado**: Row Level Security ativo em ts_measure
+2. **Continuous Aggregates**: CAGGs existem (ts_measure_1m, _5m, _1h)
+3. **Tenant GUC**: app.tenant_id configurado corretamente
+
+## 📊 Uso
+
+- **Docker health checks**: `HEALTHCHECK --interval=30s CMD curl /health/timeseries`
+- **Kubernetes probes**: liveness/readiness
+- **Monitoramento**: Prometheus, Datadog
+    ''',
+    examples=[
+        OpenApiExample(
+            'Success Response',
+            value={
+                'status': 'ok',
+                'rls_enabled': True,
+                'continuous_aggregates': ['ts_measure_1m', 'ts_measure_5m', 'ts_measure_1h'],
+                'tenant_id': 'alpha_corp'
+            },
+            response_only=True,
+            status_codes=['200']
+        )
+    ]
+)
 @api_view(["GET"])
 def health_ts(request):
     """
@@ -330,6 +364,160 @@ def health_ts(request):
 # DATA POINTS API (Fase R - Opção B)
 # ============================================================================
 
+@extend_schema(
+    tags=['Data'],
+    summary='Consultar dados de telemetria',
+    description='''
+Retorna dados de telemetria de um dispositivo IoT com roteamento automático
+para diferentes níveis de agregação (raw, 1m, 5m, 1h).
+
+## 🔄 Roteamento Automático
+
+- **raw**: Dados brutos (ts_measure_tenant) - Retenção: 14 dias
+- **1m**: Agregação 1 minuto (ts_measure_1m_tenant) - Retenção: 365 dias
+- **5m**: Agregação 5 minutos (ts_measure_5m_tenant) - Retenção: 730 dias
+- **1h**: Agregação 1 hora (ts_measure_1h_tenant) - Retenção: 1825 dias
+
+## ⚡ Degradação Automática
+
+Se `agg=raw` e janela temporal > 14 dias, degrada automaticamente para `agg=1m`.
+
+Response inclui campos extras:
+- `degraded_from`: "raw"
+- `degraded_to`: "1m"
+- `reason`: "Window exceeds raw retention..."
+
+## 🔒 Isolamento Multi-Tenant
+
+Dados filtrados automaticamente por tenant via GUC (app.tenant_id) + RLS.
+Impossível acessar dados de outros tenants (garantido pelo PostgreSQL).
+
+## ⚠️ Limites
+
+- Máximo: 10.000 pontos por requisição
+- Se exceder, response inclui `limit_reached: true` e `total_count: <n>`
+    ''',
+    parameters=[
+        OpenApiParameter(
+            name='device_id',
+            type=OpenApiTypes.UUID,
+            location=OpenApiParameter.QUERY,
+            required=True,
+            description='UUID do dispositivo IoT',
+            examples=[
+                OpenApiExample(
+                    'Example Device',
+                    value='550e8400-e29b-41d4-a716-446655440000'
+                )
+            ]
+        ),
+        OpenApiParameter(
+            name='point_id',
+            type=OpenApiTypes.UUID,
+            location=OpenApiParameter.QUERY,
+            required=True,
+            description='UUID do ponto de medição (sensor/tag)',
+            examples=[
+                OpenApiExample(
+                    'Example Point',
+                    value='660e8400-e29b-41d4-a716-446655440001'
+                )
+            ]
+        ),
+        OpenApiParameter(
+            name='start',
+            type=OpenApiTypes.DATETIME,
+            location=OpenApiParameter.QUERY,
+            required=True,
+            description='Início da janela temporal (ISO 8601)',
+            examples=[
+                OpenApiExample(
+                    'One week ago',
+                    value='2025-10-01T00:00:00Z'
+                )
+            ]
+        ),
+        OpenApiParameter(
+            name='end',
+            type=OpenApiTypes.DATETIME,
+            location=OpenApiParameter.QUERY,
+            required=True,
+            description='Fim da janela temporal (ISO 8601)',
+            examples=[
+                OpenApiExample(
+                    'Now',
+                    value='2025-10-08T23:59:59Z'
+                )
+            ]
+        ),
+        OpenApiParameter(
+            name='agg',
+            type=OpenApiTypes.STR,
+            location=OpenApiParameter.QUERY,
+            required=False,
+            description='Nível de agregação (default: raw)',
+            enum=['raw', '1m', '5m', '1h'],
+            examples=[
+                OpenApiExample('Raw data', value='raw'),
+                OpenApiExample('1 minute aggregation', value='1m'),
+                OpenApiExample('5 minute aggregation', value='5m'),
+                OpenApiExample('1 hour aggregation', value='1h'),
+            ]
+        ),
+    ],
+    examples=[
+        OpenApiExample(
+            'Success Response (1h aggregation)',
+            value={
+                'data': [
+                    {
+                        'bucket': '2025-10-01T00:00:00Z',
+                        'v_avg': 42.5,
+                        'v_max': 45.0,
+                        'v_min': 40.0,
+                        'n': 60
+                    },
+                    {
+                        'bucket': '2025-10-01T01:00:00Z',
+                        'v_avg': 43.2,
+                        'v_max': 46.1,
+                        'v_min': 41.5,
+                        'n': 60
+                    }
+                ],
+                'count': 2,
+                'agg': '1h',
+                'start': '2025-10-01T00:00:00Z',
+                'end': '2025-10-01T02:00:00Z'
+            },
+            response_only=True,
+            status_codes=['200']
+        ),
+        OpenApiExample(
+            'Degradation Response',
+            value={
+                'data': [...],
+                'count': 1440,
+                'agg': '1m',
+                'start': '2025-09-01T00:00:00Z',
+                'end': '2025-10-01T00:00:00Z',
+                'degraded_from': 'raw',
+                'degraded_to': '1m',
+                'reason': 'Window exceeds raw retention (14 days). Degraded to 1m aggregation.'
+            },
+            response_only=True,
+            status_codes=['422']
+        ),
+        OpenApiExample(
+            'Error Response (Missing Parameters)',
+            value={
+                'error': 'Missing required parameters: device_id, point_id, start, end'
+            },
+            response_only=True,
+            status_codes=['400']
+        )
+    ]
+)
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_data_points(request):

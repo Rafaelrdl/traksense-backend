@@ -29,6 +29,11 @@ Data: 2025-10-07
 
 from django.contrib import admin
 from django.urls import path, include
+from drf_spectacular.views import (
+    SpectacularAPIView,
+    SpectacularSwaggerView,
+    SpectacularRedocView
+)
 
 # ============================================================================
 # ROTAS PRINCIPAIS
@@ -89,6 +94,26 @@ urlpatterns = [
     # - RLS (Row Level Security) via middleware TenantGucMiddleware
     # - Tenant isolado automaticamente por GUC (app.tenant_id)
     path('', include('apps.timeseries.urls')),
+    
+    # --------------------------------------------------------------------------
+    # API Documentation (Swagger/OpenAPI)
+    # --------------------------------------------------------------------------
+    # Documentação automática da API REST
+    # - GET /api/schema/ → Schema OpenAPI 3.0 (JSON)
+    # - GET /api/docs/ → Swagger UI (interface interativa)
+    # - GET /api/redoc/ → ReDoc (documentação alternativa)
+    #
+    # Swagger UI:
+    # - Testar endpoints diretamente no navegador
+    # - Ver schemas de request/response
+    # - Autenticar e fazer requisições
+    #
+    # Acesso:
+    # - http://localhost:8000/api/docs/
+    # - http://localhost:8000/api/redoc/
+    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+    path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
     
     # TODO (Fase 2): Adicionar rotas para:
     # path('api/', include('devices.urls')),      # CRUD devices/points

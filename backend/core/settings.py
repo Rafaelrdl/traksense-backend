@@ -104,6 +104,9 @@ SHARED_APPS = [
     
     # Django REST Framework
     'rest_framework',
+    
+    # API Documentation (Swagger/OpenAPI)
+    'drf_spectacular',
 ]
 
 # TENANT_APPS: Apps instalados em cada schema de tenant (dados isolados)
@@ -281,6 +284,88 @@ REST_FRAMEWORK = {
         'rest_framework.renderers.JSONRenderer',
         'rest_framework.renderers.BrowsableAPIRenderer',  # Remover em prod
     ],
+    
+    # API Documentation: drf-spectacular (Swagger/OpenAPI 3.0)
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+# ============================================================================
+# DRF-SPECTACULAR: SWAGGER/OPENAPI DOCUMENTATION
+# ============================================================================
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'TrakSense Backend API',
+    'DESCRIPTION': '''
+# TrakSense API Documentation
+
+API REST para plataforma de telemetria IoT com multi-tenancy e TimescaleDB.
+
+## 🏗️ Arquitetura
+
+- **Multi-Tenant**: Isolamento por schema PostgreSQL + Row Level Security (RLS)
+- **TimescaleDB**: Hypertables + Continuous Aggregates (CAGGs) para séries temporais
+- **Django REST Framework**: API REST com autenticação e paginação
+- **Real-time Ingest**: Pipeline MQTT → PostgreSQL com QoS 1 e DLQ
+
+## 📊 Endpoints Principais
+
+### `/api/data/points`
+Query de dados de telemetria com múltiplos níveis de agregação:
+- **raw**: Dados brutos (retenção: 14 dias)
+- **1m**: Agregação 1 minuto (retenção: 365 dias)
+- **5m**: Agregação 5 minutos (retenção: 365 dias)
+- **1h**: Agregação 1 hora (retenção: 365 dias)
+
+**Degradação Automática**: Janelas > 14 dias degradam automaticamente de `raw` para `1m`.
+
+**Isolamento Tenant**: Dados filtrados automaticamente por tenant (GUC + RLS).
+
+## 🔐 Autenticação
+
+Todas as rotas requerem autenticação via Session (cookies).
+
+## 📈 Performance
+
+- **Latência**: <500ms (p95) para queries de 1 hora
+- **Throughput**: 1000+ pontos/segundo na ingestão
+- **Compressão**: ~70% de redução no armazenamento (TimescaleDB)
+    ''',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
+    
+    # Tags/Grupos de endpoints
+    'TAGS': [
+        {'name': 'Data', 'description': 'Endpoints de consulta de telemetria'},
+        {'name': 'Health', 'description': 'Health checks e status do sistema'},
+    ],
+    
+    # Autenticação
+    'APPEND_COMPONENTS': {
+        'securitySchemes': {
+            'SessionAuth': {
+                'type': 'apiKey',
+                'in': 'cookie',
+                'name': 'sessionid',
+                'description': 'Autenticação via cookie de sessão Django'
+            }
+        }
+    },
+    'SECURITY': [{'SessionAuth': []}],
+    
+    # Configurações de schema
+    'SCHEMA_PATH_PREFIX': r'/api/',
+    'SWAGGER_UI_SETTINGS': {
+        'deepLinking': True,
+        'persistAuthorization': True,
+        'displayOperationId': True,
+        'filter': True,
+    },
+    'SWAGGER_UI_FAVICON_HREF': None,
+    'REDOC_UI_SETTINGS': {
+        'hideDownloadButton': False,
+        'expandResponses': '200,201',
+    },
 }
 
 # ============================================================================
