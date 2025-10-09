@@ -1,358 +1,709 @@
-Copilot Custom Instructions — TrakSense (IoT Monitoring)
+# Copilot Instructions — TrakSense IoT Platform
 
-Contexto
-Este repositório implementa a plataforma de monitoramento IoT (multi-tenant) sem CMMS nesta fase.
-Frontend (Spark): existe um projeto React (Spark) separado e desconectado desta codebase na Fase 1. Não gerar nem alterar componentes de UI aqui além de contratos/DTOs. Este repositório cobre Backend (Django/DRF + django-tenants), Ingest (Python assíncrono), EMQX provisioning e TimescaleDB.
+## Contexto do Projeto
 
-TL;DR (regras de ouro p/ o Copilot)
+Plataforma de monitoramento IoT multi-tenant com EMQX, Django/DRF, TimescaleDB e serviço de ingest assíncrono. **Este repositório contém APENAS backend** (API + Ingest). Frontend Spark está em repositório separado.
 
-Multi-tenant: metadados por tenant; telemetria em uma única hypertable (schema public) com RLS por tenant_id.
+## Stack & Ferramentas
 
-Ingest é um serviço Python assíncrono separado (MQTT → valida/normaliza → Timescale com batch insert).
+- **Backend API**: Django 4+ / DRF + django-tenants (multi-tenancy por schema)
+- **Database**: PostgreSQL 15 + TimescaleDB (hypertable única com RLS)
+- **Broker MQTT**: EMQX 5 (Auth/ACL por device, LWT, TLS em prod)
+- **Ingest Service**: Python asyncio (asyncio-mqtt + asyncpg + Pydantic)
+- **Cache/Queue**: Redis (Celery para regras/alertas)
+- **Infraestrutura**: Docker Compose (desenvolvimento) / Kubernetes (prod)
+- **Gerenciamento**: Makefile (Linux/Mac) + manage.ps1 (PowerShell/Windows)
 
-Broker: EMQX com AuthN/ACL por device, LWT e TLS (prod).
+## Arquitetura Multi-Tenant
 
-Dashboards: não renderizamos aqui. O frontend Spark (em outro repo) consome DashboardConfig (JSON) e endpoints de dados.
+### Princípios Fundamentais
 
-Não implementar telas/React nesta codebase. Gerar APIs, modelos, migrações, RLS, adapters de ingest, testes e scripts de provisionamento.
+1. **Metadados por schema de tenant** (`{tenant_schema}.devices_*`)
+2. **Telemetria centralizada** em `public.ts_measure` com RLS por `tenant_id`
+3. **Nunca duplicar telemetria** em tabelas por tenant (anti-pattern!)
+4. **Isolamento via RLS**: `SET app.tenant_id = '<uuid>'` em toda conexão
 
-Preferir tipagem forte, Pydantic para schemas, asyncpg para ingest, DRF para APIs.
+### Schema Structure
 
-Nunca duplicar telemetria em tabelas por tenant; nunca quebrar o contrato de tópicos/payloads MQTT descritos abaixo.
+```
+public (shared):
+  ├── ts_measure (hypertable com RLS por tenant_id)
+  ├── ts_measure_{1m,5m,1h} (continuous aggregates)
+  ├── tenancy_client (tenants)
+  ├── templates_* (DeviceTemplate, PointTemplate, DashboardTemplate)
+  └── ingest_errors (DLQ - Dead Letter Queue)
 
-1) Escopo por fase
+{tenant_schema} (ex: demo):
+  ├── devices_device, devices_point
+  ├── dashboards_config
+  ├── rules_rule
+  └── commands_command
+```
 
-Fase 1 (este repo):
-Backend (Django/DRF + django-tenants), Timescale (hypertable única), Ingest assíncrono (asyncio-mqtt), EMQX provisioning, APIs de dados, commands (ACK), templates de dashboards (somente JSON), RBAC e RLS.
+**CRÍTICO**: Sempre setar `app.tenant_id` antes de queries RLS. Backend usa middleware; ingest seta explicitamente.
 
-Frontend Spark (outro repo):
-Renderizador de dashboards (ECharts/Mantine) e UI. Não desenvolver aqui.
+## Estrutura de Diretórios
 
-2) Stacks e decisões arquiteturais (ADR-000)
+```
+traksense-backend/
+├── backend/                    # Django API
+│   ├── core/                   # Settings, URLs, ASGI/WSGI
+│   ├── apps/
+│   │   ├── tenancy/            # SHARED_APPS: Client, Domain models
+│   │   ├── templates/          # SHARED_APPS: DeviceTemplate, PointTemplate
+│   │   ├── timeseries/         # SHARED_APPS: helpers RLS + queries
+│   │   ├── devices/            # TENANT_APPS: Device, Point + provisioning
+│   │   ├── dashboards/         # TENANT_APPS: DashboardConfig
+│   │   ├── rules/              # TENANT_APPS: Rule, Alert
+│   │   └── commands/           # TENANT_APPS: Command, CommandAck
+│   ├── health/                 # Health check endpoint
+│   ├── manage.py
+│   └── requirements.txt
+├── ingest/                     # Serviço assíncrono isolado
+│   ├── adapters/               # Normalizadores por vendor (parsec_v1, etc)
+│   ├── main.py                 # Producer-consumer + batching
+│   ├── config.py               # Pydantic settings from env
+│   ├── models.py               # Pydantic models (TelemetryV1, AckV1)
+│   └── requirements.txt
+├── infra/
+│   ├── docker-compose.yml      # EMQX + TimescaleDB + Redis + API + Ingest
+│   ├── .env.api                # Variáveis Django (não commitar secrets)
+│   └── .env.ingest             # Variáveis ingest
+├── scripts/
+│   ├── seed_dev.py             # Seed de dados de desenvolvimento
+│   └── provision_emqx.py       # Provisiona Auth/ACL devices no EMQX
+├── Makefile                    # Comandos Linux/Mac
+├── manage.ps1                  # Comandos PowerShell/Windows
+└── README.md
+```
 
-Broker: EMQX (Docker), Auth/ACL por device.
+## Modelo de Domínio (Core)
 
-Backend API: Django 4+/DRF + django-tenants (multi-tenant por domínio/subdomínio).
+### Hierarquia de Templates
 
-DB: PostgreSQL + TimescaleDB.
+```
+DeviceTemplate (code, version, superseded_by)
+  └─> PointTemplate[] (name, type, unit, polarity, hysteresis)
+  └─> DashboardTemplate (JSON panels)
+```
 
-Metadados (Tenant/Site/Device/Point/Rules/Dashboards) → schemas de tenants.
+**Imutabilidade**: Templates publicados nunca são alterados destrutivamente. Criar nova versão e setar `superseded_by`.
 
-Telemetria (time-series) → public.ts_measure (+ continuous aggregates, retenção e compressão) com RLS por tenant_id.
+### Hierarquia de Instâncias (por tenant)
 
-Ingest: serviço Python assíncrono isolado
+```
+Device (FK: template, name, topic_base, credentials_id, status)
+  └─> Point[] (FK: point_template, is_contracted, limits, label)
+  └─> DashboardConfig (JSON filtrado por points contratados)
+```
 
-MQTT client: asyncio-mqtt (ou gmqtt)
+### RBAC
 
-Validação: Pydantic (adapters por vendor/payload)
+- **internal_ops**: CRUD completo + provisioning EMQX
+- **customer_admin**: leitura + comandos (se habilitado)
+- **viewer**: somente leitura
 
-Persistência: asyncpg com batch insert/COPY quando aplicável
+**Regra**: Cliente nunca cria Device/Point diretamente (feito por internal_ops).
 
-Mensageria opcional: Redis para Celery (regras/alertas notificação).
+## Comandos Essenciais (Cross-Platform)
 
-Auth/SSO: placeholder (poderá ser Keycloak); por ora Django auth.
+### Linux/Mac (Makefile)
 
-Motivo: simplificar operações (uma hypertable), manter isolamento lógico por RLS, escalar ingest e API de forma independente e preservar o visual no Spark.
+```bash
+make up         # Sobe todos os serviços (Docker Compose)
+make down       # Derruba e remove volumes
+make logs       # Logs em tempo real (tail=200)
+make migrate    # Executa migrações Django
+make seed       # Seed de dados dev
+make frontend   # Ativa perfil frontend (se houver)
+```
 
-3) Estrutura de pastas (sugerida)
-/backend
-  /apps
-    /tenancy
-    /devices
-    /dashboards
-    /rules
-    /commands
-    /timeseries   # helpers/queries p/ Timescale + RLS
-  manage.py
-/ingest
-  /adapters
-    parsec_v1.py
-  main.py
-/infra
-  docker-compose.yml
-  /emqx
-    emqx.conf
-    authz.sql    # se usar Postgres Auth/ACL
-/shared
-  /schemas       # JSON Schema/Pydantic models exportados
-  /types         # Tipos TS gerados p/ o frontend (DTOs)
-/scripts
-  provision_emqx.py
-  seed_dev.py
-copilot-instructions.md
+### Windows (PowerShell)
 
+```powershell
+.\manage.ps1 up        # Sobe serviços
+.\manage.ps1 down      # Derruba serviços
+.\manage.ps1 logs      # Logs
+.\manage.ps1 migrate   # Migrações
+.\manage.ps1 health    # Testa /health endpoint
+.\manage.ps1 shell     # Django shell
+```
 
-Arquivos críticos que o Copilot não deve alterar sem pedido explícito:
+### Desenvolvimento Local (Sem Docker)
 
-Configuração de RLS/retention/compression da hypertable.
+```bash
+# Backend API
+cd backend
+pip install -r requirements.txt
+python manage.py migrate --run-syncdb
+python manage.py runserver
 
-Contratos MQTT (tópicos), formatos de payload e nomes de colunas de ts_measure.
+# Ingest Service
+cd ingest
+pip install -r requirements.txt
+python main.py
+```
 
-Estrutura base de tenants/tenant middleware.
+**Nota**: Requer PostgreSQL + TimescaleDB + EMQX + Redis rodando.
 
-4) Modelo de domínio (resumo)
+## MQTT: Contratos de Tópicos e Payloads
 
-Tenant / Site
+### Estrutura de Tópicos (OBRIGATÓRIA)
 
-DeviceTemplate (ex.: inverter_v1_parsec, chiller_v1)
+```
+traksense/{tenant}/{site}/{device}/state   # retain + LWT (online/offline)
+traksense/{tenant}/{site}/{device}/telem   # telemetria periódica
+traksense/{tenant}/{site}/{device}/event   # eventos (startup, config change)
+traksense/{tenant}/{site}/{device}/alarm   # alarmes críticos
+traksense/{tenant}/{site}/{device}/cmd     # comandos (subscribe device)
+traksense/{tenant}/{site}/{device}/ack     # confirmações (publish device)
+```
 
-PointTemplate (tipo, unidade, enum, polarity, histerese default)
+**CRÍTICO**: Ingest assina `+/+/+/telem` e `+/+/+/ack`. Nunca mudar estrutura sem migração.
 
-Device (FK template, topic_base, credentials_id)
+### Payload de Telemetria (Normalizado v1)
 
-Point (FK device; is_contracted, limits, label)
-
-DashboardTemplate (JSON de painéis) → DashboardConfig (instância filtrada por pontos contratados)
-
-Rule (limites/histerese/janela)
-
-CommandDefinition (ex.: reset_fault) e Command / CommandAck
-
-RBAC: internal_ops, customer_admin, viewer
-
-Nota: criação de Device/Point é restrita a internal_ops (painel interno). Cliente pode apenas visualizar/ajustar limites (se permitido).
-
-5) MQTT — contratos de tópicos e payloads
-
-Tópicos (prefixo obrigatório):
-
-traksense/{tenant}/{site}/{device}/state   (retain, LWT)
-traksense/{tenant}/{site}/{device}/telem
-traksense/{tenant}/{site}/{device}/event
-traksense/{tenant}/{site}/{device}/alarm
-traksense/{tenant}/{site}/{device}/cmd
-traksense/{tenant}/{site}/{device}/ack
-
-
-Telemetria (envelope normalizado):
-
+```json
 {
   "schema": "v1",
   "ts": "2025-10-07T02:34:12Z",
   "points": [
-    {"name":"temp_agua", "t":"float", "v":7.3, "u":"°C"},
-    {"name":"compressor_1_on", "t":"bool", "v":true}
+    {"name": "temp_agua", "t": "float", "v": 7.3, "u": "°C"},
+    {"name": "compressor_1_on", "t": "bool", "v": true}
   ],
-  "meta": {"fw":"1.2.3","src":"parsec_v1"}
+  "meta": {"fw": "1.2.3", "src": "parsec_v1"}
 }
+```
 
+**Campos**:
+- `t`: `"float"` | `"bool"` | `"enum"` | `"text"`
+- `v`: valor (type matching)
+- `u`: unidade opcional (string)
+- `meta`: metadados arbitrários (JSON)
 
-Command (ex.: reset de falha):
+### Adapters de Vendor
 
-{"schema":"v1","cmd_id":"ulid","op":"reset_fault","pulse_ms":500,"by":"user_ulid"}
+Para payloads proprietários (ex: Parsec), criar adapter em `ingest/adapters/`:
 
+```python
+# ingest/adapters/parsec_v1.py
+def normalize_parsec_v1(payload: bytes, tenant: str, device: str) -> List[Tuple]:
+    """Converte payload Parsec para formato normalizado."""
+    # Parse JSON vendor
+    data = orjson.loads(payload)
+    
+    # Mapeia para pontos conhecidos (ex: DI1=status, DI2=fault)
+    # Retorna tuplas prontas para INSERT em ts_measure
+    return [
+        (tenant_uuid, device_uuid, point_uuid, ts, v_num, v_bool, v_text, unit, meta)
+    ]
+```
 
-ACK:
+### Comandos e ACKs
 
-{"schema":"v1","cmd_id":"ulid","ok":true,"ts_exec":"...","err":null}
+**Comando** (publicado pela API em `.../cmd`):
+```json
+{
+  "schema": "v1",
+  "cmd_id": "01HQXYZ...",  // ULID único
+  "op": "reset_fault",
+  "pulse_ms": 500,
+  "by": "user_uuid"
+}
+```
 
+**ACK** (publicado pelo device em `.../ack`):
+```json
+{
+  "schema": "v1",
+  "cmd_id": "01HQXYZ...",
+  "ok": true,
+  "ts_exec": "2025-10-07T02:34:15Z",
+  "err": null
+}
+```
 
-Parsec (inversores) — mapeamento
+Ingest persiste ACKs em `commands_commandack` (por tenant schema) via idempotência por `cmd_id`.
 
-DI1: status → 1=RUN, 0=STOP
+## TimescaleDB: Hypertable e RLS
 
-DI2: fault → 1=FAULT, 0=OK
+### Schema da Hypertable
 
-Relé: comando reset_fault (pulso pulse_ms)
-
-Regras: FAULT sobrepõe RUN/STOP; aplicar debounce/histerese.
-
-6) Banco de dados — Timescale (telemetria)
-
-Hypertable única:
-
+```sql
 CREATE TABLE public.ts_measure (
   tenant_id  uuid NOT NULL,
   device_id  uuid NOT NULL,
   point_id   uuid NOT NULL,
   ts         timestamptz NOT NULL,
-  v_num      double precision,
-  v_bool     boolean,
-  v_text     text,
-  unit       text,
-  qual       smallint DEFAULT 0,
-  meta       jsonb
+  v_num      double precision,   -- valores numéricos
+  v_bool     boolean,             -- valores booleanos
+  v_text     text,                -- strings/enums
+  unit       text,                -- unidade (opcional)
+  qual       smallint DEFAULT 0,  -- qualidade do dado (0=OK)
+  meta       jsonb                -- metadados arbitrários
 );
-SELECT create_hypertable('public.ts_measure','ts');
 
--- Índices
-CREATE INDEX ON public.ts_measure (tenant_id, device_id, point_id, ts DESC);
-CREATE INDEX ON public.ts_measure (tenant_id, ts DESC);
+SELECT create_hypertable('public.ts_measure', 'ts');
 
--- RLS (exemplo)
+-- Índices críticos
+CREATE INDEX idx_ts_measure_tenant_device_point_ts 
+  ON public.ts_measure (tenant_id, device_id, point_id, ts DESC);
+CREATE INDEX idx_ts_measure_tenant_ts 
+  ON public.ts_measure (tenant_id, ts DESC);
+```
+
+### Row Level Security (RLS)
+
+```sql
 ALTER TABLE public.ts_measure ENABLE ROW LEVEL SECURITY;
-CREATE POLICY ts_tenant_isolation ON public.ts_measure
-USING (tenant_id = current_setting('app.tenant_id')::uuid);
 
--- Retenção/Compressão/Agregados
-SELECT add_retention_policy('public.ts_measure', INTERVAL '365 days');
-SELECT add_compression_policy('public.ts_measure', INTERVAL '7 days');
-CREATE MATERIALIZED VIEW public.ts_measure_1m WITH (timescaledb.continuous) AS
-SELECT time_bucket('1 min', ts) tb, tenant_id, device_id, point_id,
-       avg(v_num) v_avg, min(v_num) v_min, max(v_num) v_max
-FROM public.ts_measure WHERE v_num IS NOT NULL
+CREATE POLICY ts_tenant_isolation ON public.ts_measure
+  USING (tenant_id = current_setting('app.tenant_id')::uuid);
+```
+
+**CRÍTICO**: 
+- **Django**: Middleware seta `app.tenant_id` automaticamente
+- **Ingest**: Deve executar `SET app.tenant_id = $1` antes de cada insert batch
+
+### Continuous Aggregates
+
+```sql
+-- Agregação por minuto
+CREATE MATERIALIZED VIEW public.ts_measure_1m 
+  WITH (timescaledb.continuous) AS
+SELECT 
+  time_bucket('1 min', ts) AS tb,
+  tenant_id, device_id, point_id,
+  avg(v_num) AS v_avg,
+  min(v_num) AS v_min,
+  max(v_num) AS v_max,
+  count(*) AS cnt
+FROM public.ts_measure 
+WHERE v_num IS NOT NULL
 GROUP BY tb, tenant_id, device_id, point_id;
 
+-- Agregações 5m, 1h seguem o mesmo padrão
+```
 
-Copilot: sempre respeitar RLS via SET app.tenant_id = '<uuid>' na conexão (middleware no Django; setter no ingest ao persistir).
+### Políticas de Retenção e Compressão
 
-7) Ingest (serviço assíncrono)
+```sql
+-- Retenção: 365 dias (dados brutos deletados após 1 ano)
+SELECT add_retention_policy('public.ts_measure', INTERVAL '365 days');
 
-Assinar .../telem e .../ack via asyncio-mqtt
+-- Compressão: dados > 7 dias (economiza 90% de espaço)
+SELECT add_compression_policy('public.ts_measure', INTERVAL '7 days');
+```
 
-Validar payloads com Pydantic (adapters por vendor: parsec_v1)
+## Ingest Service: Arquitetura Assíncrona
 
-Converter para envelope normalizado e inserir em lote (asyncpg.executemany ou COPY)
+### Producer-Consumer Pattern
 
-DLQ (ingest_errors) para payload inválido
+```
+[EMQX Broker] 
+     |
+     v (producer task: asyncio-mqtt)
+[asyncio.Queue maxsize=10000] <-- backpressure automático
+     |
+     v (batcher task)
+[Buffer] --> flush por tamanho (500) OU tempo (1s)
+     |
+     v (executemany com RLS)
+[TimescaleDB public.ts_measure]
+```
 
-Publicar eventos (regras) no Redis/Celery quando necessário
+### Features Implementadas
 
-Skeleton (conceitual):
+- ✅ **Batching inteligente**: flush por tamanho ou timeout
+- ✅ **Backpressure**: Queue com maxsize previne OOM
+- ✅ **RLS automático**: `SET app.tenant_id` antes de cada batch
+- ✅ **DLQ**: Payloads inválidos vão para `public.ingest_errors`
+- ✅ **Métricas Prometheus**: `:9100/metrics` (contador, histogramas, gauges)
+- ✅ **Cache UUID**: Tenant e Device UUIDs cachados em memória
+- ✅ **Idempotência ACK**: `cmd_id` único previne duplicação
 
-# /ingest/main.py
-import asyncio, os, asyncpg
-from asyncio_mqtt import Client
-from adapters.parsec_v1 import normalize as norm
+### Exemplo de Adapter
 
-async def run():
-  pool = await asyncpg.create_pool(os.environ["DATABASE_URL"])
-  async with Client(os.environ["MQTT_HOST"]) as mqtt, mqtt.unfiltered_messages() as msgs:
-    await mqtt.subscribe("traksense/+/+/+/telem")
-    async for m in msgs:
-      t, s, d, _ = m.topic.split("/")[1:5]
-      rows = norm(m.payload, tenant=t, device=d)  # retorna tuplas p/ INSERT
-      async with pool.acquire() as con:
-        await con.execute("SET app.tenant_id = $1", t)
-        await con.executemany(
-          "INSERT INTO public.ts_measure(tenant_id,device_id,point_id,ts,v_num,v_bool,v_text,unit,meta)"
-          "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)", rows)
+```python
+# ingest/adapters/parsec_v1.py
+from typing import List, Tuple
+import orjson
+from models import TelemetryV1
 
-if __name__ == "__main__":
-  asyncio.run(run())
+async def normalize_parsec_v1(
+    payload: bytes, 
+    tenant_uuid: str, 
+    device_uuid: str,
+    pool: asyncpg.Pool
+) -> List[Tuple]:
+    """
+    Converte payload Parsec para tuplas prontas para INSERT.
+    
+    Retorna:
+        [(tenant_id, device_id, point_id, ts, v_num, v_bool, v_text, unit, meta), ...]
+    """
+    data = orjson.loads(payload)
+    
+    # Mapeia DI1/DI2 para pontos conhecidos
+    # Faz lookup de point_id do banco (cached)
+    # Retorna tuplas
+    rows = []
+    # ... implementação
+    return rows
+```
 
-8) API DRF (contratos principais)
+### Debugging Ingest
 
-POST /api/devices/ (somente internal_ops) → cria Device/Points, provisiona EMQX, instancia DashboardConfig a partir de DashboardTemplate do DeviceTemplate.
+```bash
+# Logs em tempo real
+docker compose -f infra/docker-compose.yml logs -f ingest
 
-GET /api/dashboards/{device_id} → retorna DashboardConfig (JSON) p/ o frontend Spark renderizar.
+# Métricas Prometheus
+curl http://localhost:9100/metrics | grep ingest_
 
-GET /api/data/points?device=...&point=...&from=...&to=...&agg=1m → séries com agregação (usa continuous aggregates).
+# Verificar DLQ (payloads inválidos)
+docker compose exec api python manage.py shell
+>>> from apps.timeseries.models import IngestError
+>>> IngestError.objects.all()
+```
 
-POST /api/cmd/{device_id} → publica comando, registra Command e aguarda ACK (timeout configurável).
+## API DRF: Endpoints Principais
 
-Regras de RBAC:
+### Endpoints REST
 
-internal_ops: CRUD de Device/Point/Template/DashboardTemplate, provisionamento EMQX.
+```
+POST   /api/devices/              # Cria Device + Points + DashboardConfig (internal_ops)
+GET    /api/devices/{id}/          # Detalhes de device (RBAC)
+PATCH  /api/devices/{id}/          # Atualiza status/config
 
-customer_admin: leitura; comandos permitidos (se habilitado).
+GET    /api/dashboards/{device_id} # DashboardConfig JSON (frontend Spark consome)
 
-viewer: leitura.
+GET    /api/data/points            # Séries temporais
+       ?device={uuid}&point={uuid}&from={iso}&to={iso}&agg={1m|5m|1h}
+       # Usa continuous aggregates (ts_measure_1m, etc)
 
-9) EMQX — provisionamento e ACL
+POST   /api/cmd/{device_id}        # Publica comando MQTT + aguarda ACK
+       Body: {"op": "reset_fault", "pulse_ms": 500}
+       Resposta: {"cmd_id": "...", "status": "pending"}
 
-Ao criar Device, gerar username/password e gravar ACL:
+GET    /health                     # Health check (public, sem auth)
+       Resposta: {"status": "ok"}
+```
 
-publish: .../state|telem|event|alarm|ack
+### RBAC Implementation
 
-subscribe: .../cmd
+**Grupos Django**:
+- `internal_ops`: Full access + provisioning
+- `customer_admin`: Read + comandos (se habilitado)
+- `viewer`: Read-only
 
-LWT em state com retain.
+**DRF Permissions**:
+```python
+# apps/devices/permissions.py
+class IsInternalOps(BasePermission):
+    def has_permission(self, request, view):
+        return request.user.groups.filter(name='internal_ops').exists()
+```
 
-TLS no 8883 em produção.
+### OpenAPI Schema
 
-Script CLI/HTTP: /scripts/provision_emqx.py.
+Django expõe schema em `/schema/` para gerar clients:
+```bash
+curl http://localhost:8000/schema/ > openapi.json
+```
 
-10) Dashboards (templates e instância)
+Frontend usa `openapi-typescript-codegen` para gerar hooks React Query.
 
-DashboardTemplate (por DeviceTemplate) define painéis (tipos: timeseries, status, timeline, kpi, button).
+## EMQX: Provisionamento e ACL
 
-DashboardConfig é gerado ao criar o Device (filtra pontos contratados).
+### Provisionamento ao Criar Device
 
-O frontend Spark consome DashboardConfig e renderiza (ECharts). Não renderizar aqui.
+```python
+# apps/devices/provisioning/emqx.py
+def provision_device_in_emqx(device: Device) -> dict:
+    """
+    1. Gera username/password únicos
+    2. Cria authentication via HTTP API EMQX
+    3. Configura ACL rules:
+       - PUBLISH: .../state, .../telem, .../event, .../alarm, .../ack
+       - SUBSCRIBE: .../cmd
+    4. Configura LWT (Last Will Testament) em .../state com retain
+    """
+    # HTTP API: POST http://emqx:18083/api/v5/authentication/...
+    # Retorna credentials_id para armazenar em Device.credentials_id
+```
 
-Exemplo de painel:
+### ACL Rules (PostgreSQL ou HTTP API)
 
+```sql
+-- Se usar PostgreSQL Auth/ACL Plugin
+INSERT INTO emqx_acl (username, permission, action, topic)
+VALUES 
+  ('device_123', 'allow', 'publish', 'traksense/demo/site-a/device_123/telem'),
+  ('device_123', 'allow', 'subscribe', 'traksense/demo/site-a/device_123/cmd');
+```
+
+### Dashboard EMQX
+
+- **URL**: http://localhost:18083
+- **Default**: admin / public (TROCAR EM PRODUÇÃO!)
+- **Features**: Clients online, Subscriptions, Topics, Rules Engine
+
+### TLS em Produção
+
+```yaml
+# docker-compose.yml (prod)
+ports:
+  - "8883:8883"  # MQTT com TLS
+volumes:
+  - ./certs:/opt/emqx/etc/certs:ro
+```
+
+## Dashboards: Templates e Configuração
+
+### DashboardTemplate (Global, SHARED_APPS)
+
+```json
 {
-  "schema":"v1",
-  "panels":[
-    {"type":"status","title":"Estado","point":"device_state","mappings":{"RUN":"Em operação","STOP":"Parado","FAULT":"Falha"}},
-    {"type":"timeseries","title":"Temperatura da água","point":"temp_agua","agg":"1m","yUnit":"°C"},
-    {"type":"button","title":"Reset falha","op":"reset_fault","params":{"pulse_ms":500}}
+  "schema": "v1",
+  "device_template_code": "inverter_v1_parsec",
+  "panels": [
+    {
+      "type": "status",
+      "title": "Estado do Inversor",
+      "point_template": "device_state",
+      "mappings": {
+        "RUN": "Em operação",
+        "STOP": "Parado",
+        "FAULT": "Falha"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Temperatura da Água",
+      "point_template": "temp_agua",
+      "agg": "1m",
+      "yUnit": "°C"
+    },
+    {
+      "type": "button",
+      "title": "Reset de Falha",
+      "op": "reset_fault",
+      "params": {"pulse_ms": 500}
+    }
   ],
-  "layout":"cards-2col"
+  "layout": "cards-2col"
 }
+```
 
-11) Qualidade e DevEx
+### DashboardConfig (Por Device, TENANT_APPS)
 
-Lint/format: Ruff + Black; typing: mypy (estrito em ingest).
+Gerado ao criar Device via `provision_device_from_template()`:
 
-Testes: Pytest (unit/integration), fixtures de payloads e consultas de séries.
+```python
+# apps/devices/services.py
+def provision_device_from_template(device: Device, template: DeviceTemplate):
+    """
+    1. Cria Points baseados em PointTemplates (filtra is_contracted)
+    2. Cria DashboardConfig baseado em DashboardTemplate
+    3. Substitui point_template → point_id real
+    4. Provisiona device no EMQX
+    """
+    # DashboardConfig.config_json contém painel renderizável
+```
 
-CI: lint + testes + migrações.
+**Frontend Spark** busca `/api/dashboards/{device_id}` e renderiza com ECharts/Mantine.
 
-Docker/Compose: subir EMQX, Timescale, Redis, API, Ingest.
+## Convenções de Código e Qualidade
 
-Secrets via .env.* (não commitar).
+### Python (Backend/Ingest)
 
-12) Tarefas típicas que o Copilot deve ajudar (com prioridade)
+- **Formatação**: Black (line-length 100)
+- **Lint**: Ruff (fast linter, substitui flake8/isort)
+- **Type Checking**: mypy (strict em ingest, moderate em backend)
+- **Docstrings**: Google style (obrigatório em funções públicas)
 
-Gerar models DRF (DeviceTemplate/PointTemplate/Device/Point/Rule/Command/DashboardTemplate/Config).
+```python
+# Exemplo de docstring
+def get_tenant_uuid(pool: asyncpg.Pool, schema_name: str) -> str:
+    """
+    Resolve tenant UUID a partir do schema_name.
+    
+    Args:
+        pool: Pool de conexões asyncpg
+        schema_name: Nome do schema do tenant (ex: 'demo')
+    
+    Returns:
+        UUID do tenant como string, ou None se não encontrado
+    """
+```
 
-Produzir migrações SQL p/ Timescale (hypertable, índices, policies RLS, retention/compression, continuous aggregates).
+### Django
 
-Implementar provision_emqx.py (Auth/ACL) e hooks de criação de device.
+- **Models**: sempre incluir `__str__`, `Meta.verbose_name`, docstrings
+- **Migrations**: nomear descritivamente (`0003_add_rls_policy.py`)
+- **Signals**: EVITAR para lógica complexa; usar services explícitos
+- **Tests**: `pytest-django` com fixtures em `conftest.py`
 
-Escrever adapters Pydantic (ex.: parsec_v1) com validação e normalização.
+### Nomenclatura
 
-Implementar endpoints /api/devices, /api/dashboards/{id}, /api/data/points, /api/cmd/{id} (+ testes).
+- **snake_case**: funções, variáveis, nomes de pontos MQTT, colunas SQL
+- **PascalCase**: classes Django/DRF
+- **UPPER_SNAKE**: constantes
+- **UUIDs**: sempre `uuid.uuid4()` (ou ULID para comandos)
 
-Criar jobs Celery para regras/alertas (threshold/histerese/janelas).
+### Commits
 
-Gerar DTOs/JSON Schema e tipos TS em /shared/types para consumo no frontend.
+Formato: `<type>(<scope>): <description>`
 
-13) Fora de escopo (nesta codebase / Fase 1)
+```
+feat(ingest): implementa batching com asyncpg.executemany
+fix(api): corrige query RLS em /api/data/points
+docs(readme): atualiza instruções Windows
+refactor(devices): extrai provisionamento EMQX para service
+test(ingest): adiciona test para adapter parsec_v1
+```
 
-Qualquer UI React/HTML/CSS (está no frontend Spark, outro repo).
+### Testes
 
-Integração CMMS/TrakNor (será feita depois).
+```bash
+# Backend (Django)
+pytest backend/ -v --cov=backend --cov-report=html
 
-Persistir telemetria por schema de tenant (não fazer).
+# Ingest
+pytest ingest/ -v --cov=ingest
 
-Grafana (não usar aqui; dashboards são do frontend Spark).
+# Testes de integração (requer Docker)
+pytest backend/apps/devices/tests/test_provision_integration.py
+```
 
-14) Convenções de nome e commit
+**Coverage mínimo**: 80% (configurado em `pytest.ini`)
 
-Tópicos MQTT, colunas e nomes de pontos são snake_case.
+## Tarefas Comuns para AI Agents
 
-tenant_id, device_id, point_id como UUID/ULID.
+### Adicionar Novo DeviceTemplate
 
-Mensagens de commit: feat(ingest): batch insert asyncpg, fix(api): RLS setter, etc.
+1. Criar registro em `apps.templates.models.DeviceTemplate`
+2. Criar `PointTemplate[]` associados
+3. Criar `DashboardTemplate` JSON
+4. Migração + seed script
 
-15) Glossário rápido
+### Adicionar Endpoint DRF
 
-DeviceTemplate/PointTemplate: definem tipo de equipamento e pontos padrão.
+```python
+# apps/devices/views.py
+class DeviceViewSet(viewsets.ModelViewSet):
+    queryset = Device.objects.all()
+    serializer_class = DeviceSerializer
+    permission_classes = [IsAuthenticated, IsInternalOps]
+    
+    @action(detail=True, methods=['post'])
+    def provision(self, request, pk=None):
+        """Provisiona device no EMQX."""
+        device = self.get_object()
+        result = provision_device_in_emqx(device)
+        return Response(result)
+```
 
-DashboardTemplate/Config: modelo de painéis → instância por device.
+### Criar Adapter de Vendor
 
-RLS: Row Level Security — filtra dados por tenant_id.
+1. Arquivo em `ingest/adapters/{vendor}_v{version}.py`
+2. Função `normalize_{vendor}_v{version}(payload, tenant_uuid, device_uuid, pool)`
+3. Validação Pydantic dos campos obrigatórios
+4. Lookup de `point_id` (cached)
+5. Retornar tuplas para `executemany`
 
-LWT: Last Will and Testament (offline no state).
+### Adicionar Continuous Aggregate
 
-ACK: confirmação de comando.
+```sql
+-- Migration: 0004_add_timeseries_5m_aggregate.py
+CREATE MATERIALIZED VIEW public.ts_measure_5m 
+  WITH (timescaledb.continuous) AS
+SELECT 
+  time_bucket('5 min', ts) AS tb,
+  tenant_id, device_id, point_id,
+  avg(v_num) AS v_avg,
+  min(v_num) AS v_min,
+  max(v_num) AS v_max
+FROM public.ts_measure 
+WHERE v_num IS NOT NULL
+GROUP BY tb, tenant_id, device_id, point_id;
+```
 
-16) Como o Copilot deve proceder quando houver ambiguidade
+## Fora de Escopo (NÃO FAZER)
 
-Priorizar padrões estabelecidos acima.
+- ❌ **UI React/HTML/CSS**: Frontend está em repo separado
+- ❌ **Telemetria por schema de tenant**: Usar `public.ts_measure` com RLS
+- ❌ **Grafana**: Dashboards são JSON consumidos pelo frontend Spark
+- ❌ **Mudar estrutura de tópicos MQTT**: Contrato fixo
+- ❌ **Alterar templates publicados destrutivamente**: Criar nova versão
 
-Se faltarem campos, propor extensões mantendo compatibilidade (ex.: adicionar qual/meta).
+## Glossário
 
-Não inventar novos tópicos MQTT, não mover telemetria para tabelas por tenant.
+- **DeviceTemplate**: Tipo de equipamento (ex: inverter_v1_parsec)
+- **PointTemplate**: Ponto de telemetria padrão (ex: temp_agua)
+- **DashboardTemplate**: Layout de painéis JSON (global)
+- **DashboardConfig**: Instância de dashboard por device (filtrado)
+- **RLS**: Row Level Security (filtragem por tenant_id)
+- **LWT**: Last Will and Testament (MQTT offline detection)
+- **ACK**: Acknowledgment (confirmação de comando)
+- **DLQ**: Dead Letter Queue (payloads inválidos)
+- **Continuous Aggregate**: Materialized view TimescaleDB (pré-agregação)
 
-Documentar decisões em comentários e, se relevante, criar ADR em /docs/adr/ADR-00X.md.
+## Debugging e Troubleshooting
 
-Lembrete final: o frontend (Spark) é outro projeto. Aqui, entregue APIs estáveis, ingest confiável, provisionamento EMQX, Timescale + RLS, e templates JSON de dashboards — nada de UI.
+### Logs
 
+```bash
+# API
+docker compose -f infra/docker-compose.yml logs -f api
 
+# Ingest
+docker compose -f infra/docker-compose.yml logs -f ingest
 
-Sempre comente os codigos para ajudar no entendimento do codigo em portugues.
+# EMQX
+docker compose -f infra/docker-compose.yml logs -f emqx
+```
+
+### Django Shell
+
+```powershell
+.\manage.ps1 shell
+# Ou:
+docker compose -f infra/docker-compose.yml exec api python manage.py shell
+```
+
+```python
+# Verificar RLS
+from apps.tenancy.models import Client
+tenant = Client.objects.first()
+from django.db import connection
+connection.cursor().execute(f"SET app.tenant_id = '{tenant.uuid}'")
+
+# Query telemetria
+from apps.timeseries.models import Measure
+Measure.objects.filter(device_id='...')[:10]
+```
+
+### Health Checks
+
+```bash
+# API
+curl http://localhost:8000/health
+
+# EMQX
+curl http://localhost:18083/api/v5/status
+
+# Métricas Ingest (Prometheus)
+curl http://localhost:9100/metrics | grep ingest_
+```
+
+## Documentação Adicional
+
+- **README.md**: Setup rápido e visão geral
+- **SETUP_WINDOWS.md**: Instruções específicas PowerShell
+- **docs/adr/**: Architecture Decision Records
+- **VALIDATION_*.md**: Checklists de validação por fase
+- **API_IMPLEMENTATION_COMPLETE.md**: Status de implementação
+
+**SEMPRE comentar código em português** para facilitar manutenção pela equipe brasileira.
