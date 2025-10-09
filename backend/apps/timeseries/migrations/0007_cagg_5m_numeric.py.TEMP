@@ -1,0 +1,217 @@
+# Generated manually - Fase R - Opção A
+# Continuous Aggregate 5m com compressão para dados numéricos
+
+from django.db import migrations
+
+
+class Migration(migrations.Migration):
+    """
+    Continuous Aggregate 5m (5 minutos) - APENAS dados numéricos
+    
+    Estratégia:
+    ----------
+    - Agrega v_num do raw (não do 1m CAGG) para simplificar
+    - Compressão habilitada (CAGGs não têm RLS)
+    - Retenção: 730 dias (24 meses de histórico agregado)
+    
+    Políticas:
+    ---------
+    1. Refresh: a cada 5 minutos, janela [now()-90d, now()-5m]
+       - start_offset=90d cobre período além do raw (14d)
+    2. Compressão: chunks > 7 dias (~10x redução de storage)
+    3. Retenção: dados > 730 dias deletados automaticamente
+    
+    Performance:
+    -----------
+    - Índice: (tenant_id, device_id, point_id, bucket DESC)
+    - Query típica: filtro por tenant+device+point + range bucket
+    - Ideal para dashboards de semanas/meses
+    
+    API Usage:
+    ---------
+    - GET /data/points?agg=5m → usa este CAGG
+    - Janelas longas (>7 dias) → preferir 5m sobre 1m para reduzir payload
+    """
+
+    dependencies = [
+        ('timeseries', '0006_cagg_1m_create'),
+    ]
+
+    operations = [
+        # ============================================================================
+        # 1. CREATE CONTINUOUS AGGREGATE VIEW
+        # ============================================================================
+        migrations.RunSQL(
+            sql="""
+            -- Limpar view/materialized view existente (se houver)
+            DROP VIEW IF EXISTS public.ts_measure_5m CASCADE;
+            DROP MATERIALIZED VIEW IF EXISTS public.ts_measure_5m CASCADE;
+            
+            -- Criar continuous aggregate para 5 minutos (apenas numéricos)
+            CREATE MATERIALIZED VIEW public.ts_measure_5m
+            WITH (timescaledb.continuous) AS
+            SELECT 
+                time_bucket('5 minutes', ts) AS bucket,
+                tenant_id,
+                device_id,
+                point_id,
+                AVG(v_num) AS v_avg,
+                MAX(v_num) AS v_max,
+                MIN(v_num) AS v_min,
+                COUNT(v_num) AS n
+            FROM public.ts_measure
+            WHERE v_num IS NOT NULL  -- apenas valores numéricos
+            GROUP BY bucket, tenant_id, device_id, point_id
+            WITH NO DATA;  -- não materializar agora (será feito por refresh policy)
+            
+            -- Comentário explicativo
+            COMMENT ON MATERIALIZED VIEW public.ts_measure_5m IS
+            'Continuous Aggregate 5 minutos - dados numéricos (v_num).
+             
+             Campos:
+             - bucket: timestamp do bucket (5 min)
+             - tenant_id, device_id, point_id: identificadores
+             - v_avg: média do v_num no bucket
+             - v_max: máximo do v_num no bucket
+             - v_min: mínimo do v_num no bucket
+             - n: quantidade de amostras no bucket
+             
+             Refresh: a cada 5min, janela [now()-90d, now()-5m]
+             Compressão: chunks > 7 dias
+             Retenção: 730 dias (24 meses)
+             
+             API: GET /data/points?agg=5m → usa esta view
+             Ideal para: dashboards de semanas/meses
+             =============================================';
+            """,
+            reverse_sql="""
+            DROP MATERIALIZED VIEW IF EXISTS public.ts_measure_5m CASCADE;
+            """
+        ),
+        
+        # ============================================================================
+        # 2. CRIAR ÍNDICE PARA PERFORMANCE
+        # ============================================================================
+        migrations.RunSQL(
+            sql="""
+            -- Índice para queries típicas: filtro por tenant+device+point + range bucket
+            CREATE INDEX IF NOT EXISTS ts_measure_5m_tenant_device_point_bucket_idx
+                ON public.ts_measure_5m (tenant_id, device_id, point_id, bucket DESC);
+            
+            -- Comentário do índice
+            COMMENT ON INDEX public.ts_measure_5m_tenant_device_point_bucket_idx IS
+            'Índice para queries: WHERE tenant_id=X AND device_id=Y AND point_id=Z AND bucket BETWEEN A AND B';
+            """,
+            reverse_sql="""
+            DROP INDEX IF EXISTS public.ts_measure_5m_tenant_device_point_bucket_idx;
+            """
+        ),
+        
+        # ============================================================================
+        # 3. REFRESH POLICY (materialização automática)
+        # ============================================================================
+        migrations.RunSQL(
+            sql="""
+            -- Remover policy existente (se houver)
+            SELECT remove_continuous_aggregate_policy('public.ts_measure_5m', if_exists => true);
+            
+            -- Adicionar refresh policy
+            -- start_offset: 90 dias (cobre período além do raw 14d)
+            -- end_offset: 5 minutos (evitar dados ainda sendo ingeridos)
+            -- schedule_interval: a cada 5 minutos
+            SELECT add_continuous_aggregate_policy(
+                'public.ts_measure_5m',
+                start_offset => INTERVAL '90 days',
+                end_offset   => INTERVAL '5 minutes',
+                schedule_interval => INTERVAL '5 minutes',
+                if_not_exists => true
+            );
+            
+            RAISE NOTICE 'Refresh policy configurada: ts_measure_5m refresh a cada 5min';
+            """,
+            reverse_sql="""
+            SELECT remove_continuous_aggregate_policy('public.ts_measure_5m', if_exists => true);
+            """
+        ),
+        
+        # ============================================================================
+        # 4. HABILITAR COMPRESSÃO
+        # ============================================================================
+        migrations.RunSQL(
+            sql="""
+            -- CAGGs NÃO têm RLS, portanto compressão é COMPATÍVEL
+            ALTER MATERIALIZED VIEW public.ts_measure_5m
+                SET (timescaledb.compress = true);
+            
+            RAISE NOTICE 'Compressão habilitada: ts_measure_5m (compatível - sem RLS)';
+            """,
+            reverse_sql="""
+            ALTER MATERIALIZED VIEW public.ts_measure_5m
+                SET (timescaledb.compress = false);
+            """
+        ),
+        
+        # ============================================================================
+        # 5. COMPRESSION POLICY
+        # ============================================================================
+        migrations.RunSQL(
+            sql="""
+            -- Remover policy existente (se houver)
+            SELECT remove_compression_policy('public.ts_measure_5m', if_exists => true);
+            
+            -- Adicionar compression policy
+            -- Chunks com > 7 dias serão comprimidos automaticamente
+            SELECT add_compression_policy(
+                'public.ts_measure_5m',
+                INTERVAL '7 days',
+                if_not_exists => true
+            );
+            
+            RAISE NOTICE 'Compression policy configurada: ts_measure_5m comprime após 7d';
+            """,
+            reverse_sql="""
+            SELECT remove_compression_policy('public.ts_measure_5m', if_exists => true);
+            """
+        ),
+        
+        # ============================================================================
+        # 6. RETENTION POLICY
+        # ============================================================================
+        migrations.RunSQL(
+            sql="""
+            -- Remover policy existente (se houver)
+            SELECT remove_retention_policy('public.ts_measure_5m', if_exists => true);
+            
+            -- Adicionar retention policy
+            -- Dados com > 730 dias (24 meses) serão deletados automaticamente
+            SELECT add_retention_policy(
+                'public.ts_measure_5m',
+                INTERVAL '730 days',
+                if_not_exists => true
+            );
+            
+            RAISE NOTICE 'Retention policy configurada: ts_measure_5m mantém 730d (24 meses)';
+            """,
+            reverse_sql="""
+            SELECT remove_retention_policy('public.ts_measure_5m', if_exists => true);
+            """
+        ),
+        
+        # ============================================================================
+        # 7. MATERIALIZAÇÃO INICIAL
+        # ============================================================================
+        migrations.RunSQL(
+            sql="""
+            -- Materializar dados dos últimos 90 dias (se existirem)
+            -- Isso pode demorar dependendo do volume de dados
+            CALL refresh_continuous_aggregate(
+                'public.ts_measure_5m',
+                now() - INTERVAL '90 days',
+                now()
+            );
+            
+            RAISE NOTICE 'Materialização inicial completa: ts_measure_5m (últimos 90d)';
+            """,
+            reverse_sql=migrations.RunSQL.noop
+        ),
+    ]
