@@ -91,6 +91,7 @@ SHARED_APPS = [
     # Apps TrakSense compartilhados
     'apps.tenancy',
     'apps.timeseries',
+    'apps.templates',  # Templates globais (DeviceTemplate, PointTemplate, DashboardTemplate)
     'health',  # health está em backend/health/
     
     # Django built-in apps

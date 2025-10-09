@@ -156,3 +156,22 @@ class DashboardConfig(models.Model):
     
     def __str__(self):
         return f"Dashboard de {self.device.name}"
+    
+    def clean(self):
+        """
+        Validação customizada: valida JSON contra schema v1.
+        
+        Garante que o JSON de DashboardConfig (gerado automaticamente ou manualmente editado)
+        está em conformidade com o schema v1 antes de salvar.
+        """
+        super().clean()
+        
+        # Importar validador aqui para evitar importação circular
+        from .validators import validate_dashboard_template
+        
+        try:
+            validate_dashboard_template(self.json)
+        except Exception as e:
+            raise ValidationError({
+                'json': f"JSON inválido: {str(e)}"
+            })
