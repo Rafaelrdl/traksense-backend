@@ -82,6 +82,84 @@ MET_QUEUE_SIZE = Gauge("ingest_queue_size", "Tamanho atual da fila interna")
 
 
 # ============================================================================
+# CACHE E LOOKUP DE UUIDs
+# ============================================================================
+
+# Cache global tenant_schema → tenant_uuid
+_tenant_cache = {}
+
+# Cache global (tenant_schema, device_name) → device_uuid
+_device_cache = {}
+
+
+async def get_tenant_uuid(pool: asyncpg.Pool, schema_name: str) -> str:
+    """
+    Resolve tenant UUID a partir do schema_name.
+    
+    Usa cache para evitar lookups repetidos. Se tenant não encontrado,
+    retorna None (mensagem deve ir para DLQ).
+    
+    Args:
+        pool: Pool de conexões asyncpg
+        schema_name: Nome do schema do tenant (ex: 'demo')
+    
+    Returns:
+        UUID do tenant como string, ou None se não encontrado
+    """
+    if schema_name in _tenant_cache:
+        return _tenant_cache[schema_name]
+    
+    async with pool.acquire() as con:
+        row = await con.fetchrow(
+            "SELECT uuid FROM public.tenancy_client WHERE schema_name = $1",
+            schema_name
+        )
+        
+        if row:
+            tenant_uuid = str(row['uuid'])
+            _tenant_cache[schema_name] = tenant_uuid
+            logger.debug(f"[CACHE] Tenant '{schema_name}' → UUID {tenant_uuid}")
+            return tenant_uuid
+        else:
+            logger.error(f"[CACHE] Tenant '{schema_name}' não encontrado!")
+            return None
+
+
+async def get_device_uuid(pool: asyncpg.Pool, tenant_schema: str, device_name: str) -> str:
+    """
+    Resolve device UUID a partir do nome do device no schema do tenant.
+    
+    Usa cache para evitar lookups repetidos. Se device não encontrado,
+    retorna None (mensagem deve ir para DLQ).
+    
+    Args:
+        pool: Pool de conexões asyncpg
+        tenant_schema: Nome do schema do tenant (ex: 'demo')
+        device_name: Nome do device (ex: 'inv-01')
+    
+    Returns:
+        UUID do device como string, ou None se não encontrado
+    """
+    cache_key = (tenant_schema, device_name)
+    if cache_key in _device_cache:
+        return _device_cache[cache_key]
+    
+    async with pool.acquire() as con:
+        # Query no schema do tenant
+        query = f"SELECT id FROM {tenant_schema}.devices_device WHERE name = $1"
+        row = await con.fetchrow(query, device_name)
+        
+        if row:
+            device_uuid = str(row['id'])
+            _device_cache[cache_key] = device_uuid
+            logger.debug(f"[CACHE] Device '{tenant_schema}.{device_name}' → UUID {device_uuid}")
+            return device_uuid
+        else:
+            logger.error(f"[CACHE] Device '{device_name}' não encontrado em schema '{tenant_schema}'!")
+            return None
+
+
+# ============================================================================
 # FUNÇÃO PRINCIPAL ASSÍNCRONA
 # ============================================================================
 
@@ -350,47 +428,96 @@ async def flush(pool: asyncpg.Pool, buf: List[Tuple]):
             MET_ERR.labels(reason="parse_error").inc()
             logger.warning(f"[FLUSH] Erro ao processar: {e}")
     
+    # ========== LOOKUP DE UUIDs ==========
+    # Converter tenant_schema e device_name em UUIDs antes de persistir
+    rows_ts_resolved = []
+    rows_ack_resolved = []
+    rows_dlq_resolved = []
+    
+    # Resolver UUIDs para telemetria
+    for tenant_schema, device_name, point_id, ts, v_num, v_bool, v_text, unit, meta in rows_ts:
+        tenant_uuid = await get_tenant_uuid(pool, tenant_schema)
+        device_uuid = await get_device_uuid(pool, tenant_schema, device_name)
+        
+        if not tenant_uuid or not device_uuid:
+            # Enviar para DLQ se lookup falhou
+            topic = f"traksense/{tenant_schema}/unknown/{device_name}/telem"
+            payload_str = f"point={point_id}, ts={ts}, v_num={v_num}, v_bool={v_bool}, v_text={v_text}"
+            reason = f"Tenant ou device não encontrado: tenant={tenant_schema}, device={device_name}"
+            rows_dlq.append((tenant_schema, topic, payload_str, reason))
+            MET_ERR.labels(reason="uuid_lookup_failed").inc()
+            logger.error(f"[FLUSH] {reason}")
+            continue
+        
+        rows_ts_resolved.append((
+            tenant_uuid, device_uuid, point_id, ts,
+            v_num, v_bool, v_text, unit, meta
+        ))
+    
+    # Resolver UUIDs para ACKs
+    for tenant_schema, device_name, cmd_id, ok, ts_exec, payload_json in rows_ack:
+        tenant_uuid = await get_tenant_uuid(pool, tenant_schema)
+        device_uuid = await get_device_uuid(pool, tenant_schema, device_name)
+        
+        if not tenant_uuid or not device_uuid:
+            # Enviar para DLQ se lookup falhou
+            topic = f"traksense/{tenant_schema}/unknown/{device_name}/ack"
+            reason = f"Tenant ou device não encontrado: tenant={tenant_schema}, device={device_name}"
+            rows_dlq.append((tenant_schema, topic, str(payload_json), reason))
+            MET_ERR.labels(reason="uuid_lookup_failed").inc()
+            logger.error(f"[FLUSH] {reason}")
+            continue
+        
+        rows_ack_resolved.append((
+            tenant_uuid, device_uuid, cmd_id, ok, ts_exec, payload_json
+        ))
+    
+    # Resolver UUIDs para DLQ (best effort - aceita NULL)
+    for tenant_schema, topic, payload_str, reason in rows_dlq:
+        tenant_uuid = await get_tenant_uuid(pool, tenant_schema)
+        # Se não conseguir resolver UUID, usa NULL (permitido pela tabela)
+        rows_dlq_resolved.append((tenant_uuid, topic, payload_str, reason))
+    
     # ========== PERSISTÊNCIA ==========
     async with pool.acquire() as con:
         # Telemetria (RLS via GUC)
-        if rows_ts:
+        if rows_ts_resolved:
             # Medir latência: diferença entre NOW() e timestamps dos pontos
             from datetime import datetime, timezone
             now = datetime.now(timezone.utc)
-            for tenant, device, point_id, ts, v_num, v_bool, v_text, unit, meta in rows_ts:
+            for tenant_uuid, device_uuid, point_id, ts, v_num, v_bool, v_text, unit, meta in rows_ts_resolved:
                 if ts:  # Só medir se tiver timestamp válido
                     latency = (now - ts).total_seconds()
                     if latency >= 0:  # Ignora latências negativas (clock skew)
                         MET_LAT.observe(latency)
             
-            # Nota: aqui simplificamos setando GUC por linha
-            # Para máxima performance, agrupar por tenant e usar COPY
+            # Inserir com UUIDs resolvidos
             await con.executemany("""
                 INSERT INTO public.ts_measure
                   (tenant_id, device_id, point_id, ts, v_num, v_bool, v_text, unit, meta)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            """, rows_ts)
-            logger.info(f"[FLUSH] Inseridos {len(rows_ts)} pontos de telemetria")
+            """, rows_ts_resolved)
+            logger.info(f"[FLUSH] Inseridos {len(rows_ts_resolved)} pontos de telemetria")
         
         # ACKs (idempotência via ON CONFLICT)
-        if rows_ack:
+        if rows_ack_resolved:
             await con.executemany("""
                 INSERT INTO public.cmd_ack
                   (tenant_id, device_id, cmd_id, ok, ts_exec, payload)
                 VALUES ($1, $2, $3, $4, $5, $6)
                 ON CONFLICT (tenant_id, device_id, cmd_id) DO UPDATE
                 SET ok=excluded.ok, ts_exec=excluded.ts_exec, payload=excluded.payload, updated_at=NOW()
-            """, rows_ack)
-            logger.info(f"[FLUSH] Inseridos {len(rows_ack)} ACKs")
+            """, rows_ack_resolved)
+            logger.info(f"[FLUSH] Inseridos {len(rows_ack_resolved)} ACKs")
         
         # DLQ
-        if rows_dlq:
+        if rows_dlq_resolved:
             await con.executemany("""
                 INSERT INTO public.ingest_errors
                   (tenant_id, topic, payload, reason)
                 VALUES ($1, $2, $3, $4)
-            """, rows_dlq)
-            logger.warning(f"[FLUSH] {len(rows_dlq)} payloads enviados para DLQ")
+            """, rows_dlq_resolved)
+            logger.warning(f"[FLUSH] {len(rows_dlq_resolved)} payloads enviados para DLQ")
 
 
 async def main():

@@ -64,6 +64,7 @@ Notas:
 Autor: TrakSense Team
 Data: 2025-10-07
 """
+import uuid
 from django.db import models
 from django_tenants.models import TenantMixin, DomainMixin
 
@@ -104,6 +105,13 @@ class Client(TenantMixin):
     from django.db import connection
     tenant = connection.tenant  # setado por TenantMainMiddleware
     """
+    # UUID único para uso em timeseries (ts_measure.tenant_id)
+    uuid = models.UUIDField(
+        unique=True,
+        editable=False,
+        help_text="UUID único do tenant para uso em timeseries e integração MQTT"
+    )
+    
     # Nome amigável do tenant
     name = models.CharField(
         max_length=200,
@@ -140,6 +148,20 @@ class Client(TenantMixin):
         indexes = [
             models.Index(fields=['is_active', 'created_on']),
         ]
+    
+    def save(self, *args, **kwargs):
+        """
+        Override do save para gerar UUID deterministicamente baseado no schema_name.
+        
+        Usa uuid5 com NAMESPACE_DNS para garantir que:
+        1. Mesmo schema_name sempre gera mesmo UUID (idempotência)
+        2. UUIDs diferentes para schemas diferentes (colisão impossível)
+        3. UUID é previsível e reproduzível em diferentes ambientes
+        """
+        if not self.uuid:
+            # Gerar UUID deterministicamente do schema_name
+            self.uuid = uuid.uuid5(uuid.NAMESPACE_DNS, f"traksense.tenant.{self.schema_name}")
+        super().save(*args, **kwargs)
     
     def __str__(self):
         return f"{self.name} ({self.schema_name})"

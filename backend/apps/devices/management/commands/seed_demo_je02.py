@@ -24,8 +24,8 @@ import json
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction, connection
 from apps.tenancy.models import Client, Domain
-from apps.templates.models import DeviceTemplate, DashboardTemplate
-from apps.devices.models import Device, Point
+from apps.templates.models import DeviceTemplate as GlobalDeviceTemplate, DashboardTemplate as GlobalDashboardTemplate
+from apps.devices.models import Device, Point, DeviceTemplate
 from apps.dashboards.models import DashboardConfig
 from apps.devices.services import provision_emqx_for_device
 
@@ -123,30 +123,64 @@ class Command(BaseCommand):
         return tenant
     
     def _get_templates(self):
-        """Obtém DeviceTemplate e DashboardTemplate."""
-        self.stdout.write("📦 Step 2: Buscando templates JE02...")
+        """Obtém/cria DeviceTemplate no tenant a partir do global."""
+        self.stdout.write("📦 Step 2: Buscando/criando templates JE02...")
         
+        # Buscar template global do public schema
         try:
-            device_template = DeviceTemplate.objects.get(
+            global_template = GlobalDeviceTemplate.objects.get(
                 code='inverter_je02_v1',
                 version=1,
                 is_global=True
             )
-            self.stdout.write(self.style.SUCCESS(f"   ✅ DeviceTemplate encontrado: {device_template.code}"))
-        except DeviceTemplate.DoesNotExist:
+            self.stdout.write(self.style.SUCCESS(f"   ✅ DeviceTemplate global encontrado: {global_template.code}"))
+        except GlobalDeviceTemplate.DoesNotExist:
             raise CommandError(
-                "❌ DeviceTemplate 'inverter_je02_v1' não encontrado!\n"
+                "❌ DeviceTemplate global 'inverter_je02_v1' não encontrado!\n"
                 "Execute as migrations primeiro:\n"
                 "  docker compose exec api python manage.py migrate templates"
             )
         
+        # Criar/obter template local no tenant
+        device_template, created = DeviceTemplate.objects.get_or_create(
+            code=global_template.code,
+            version=global_template.version,
+            defaults={
+                'name': global_template.name,
+                'description': global_template.description,
+            }
+        )
+        
+        if created:
+            self.stdout.write(self.style.SUCCESS(f"   ✅ DeviceTemplate local criado: {device_template.code}"))
+            
+            # Copiar PointTemplates também
+            from apps.templates.models import PointTemplate as GlobalPointTemplate
+            from apps.devices.models import PointTemplate
+            
+            for gpt in global_template.point_templates.all():
+                PointTemplate.objects.get_or_create(
+                    device_template=device_template,
+                    name=gpt.name,
+                    defaults={
+                        'label': gpt.name.replace('_', ' ').title(),
+                        'ptype': gpt.ptype,
+                        'unit': gpt.unit or '',
+                        'default_limits': gpt.default_limits or {},
+                    }
+                )
+            self.stdout.write(f"   ✅ {global_template.point_templates.count()} PointTemplates copiados")
+        else:
+            self.stdout.write(f"   ℹ️  DeviceTemplate local já existe: {device_template.code}")
+        
+        # Buscar DashboardTemplate global
         try:
-            dashboard_template = DashboardTemplate.objects.get(
-                device_template=device_template,
+            dashboard_template = GlobalDashboardTemplate.objects.get(
+                device_template=global_template,
                 version=1
             )
             self.stdout.write(self.style.SUCCESS("   ✅ DashboardTemplate encontrado"))
-        except DashboardTemplate.DoesNotExist:
+        except GlobalDashboardTemplate.DoesNotExist:
             raise CommandError(
                 "❌ DashboardTemplate para 'inverter_je02_v1' não encontrado!\n"
                 "Execute as migrations primeiro:\n"
@@ -171,7 +205,7 @@ class Command(BaseCommand):
             device, created = Device.objects.get_or_create(
                 name=name,
                 defaults={
-                    'template': device_template,
+                    'template': device_template,  # Agora usa o template local
                     'topic_base': f"traksense/demo/plant-01/{name.lower()}",
                 }
             )
@@ -234,7 +268,7 @@ class Command(BaseCommand):
         self.stdout.write("")
         return mqtt_creds
     
-    def _create_dashboards(self, devices, dashboard_template: DashboardTemplate):
+    def _create_dashboards(self, devices, dashboard_template: GlobalDashboardTemplate):
         """Cria DashboardConfig para cada device."""
         self.stdout.write("📦 Step 5: Criando DashboardConfigs...")
         
@@ -244,7 +278,6 @@ class Command(BaseCommand):
                 device=device,
                 defaults={
                     'json': dashboard_template.json,  # Copiar JSON do template
-                    'version': dashboard_template.version
                 }
             )
             

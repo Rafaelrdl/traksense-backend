@@ -24,7 +24,7 @@ Autor: TrakSense Team
 Data: 2025-10-08 (Fase D)
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any
 from .types import Normalized
 
@@ -57,9 +57,9 @@ def adapt_je02_data(payload: Dict[str, Any]) -> Normalized:
     """
     data = payload["DATA"]
     
-    # 1. Extrair timestamp
+    # 1. Extrair timestamp (sempre em UTC)
     ts_unix = data["TS"]
-    ts = datetime.fromtimestamp(ts_unix)
+    ts = datetime.fromtimestamp(ts_unix, tz=timezone.utc)
     
     # 2. Extrair valores brutos
     input1 = data["INPUT1"]
