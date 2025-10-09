@@ -58,7 +58,8 @@ Data: 2025-10-07
 """
 import logging
 from django.db import connection
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from .dbutils import get_aggregate_view_name, get_current_tenant_id
@@ -321,5 +322,211 @@ def health_ts(request):
         logger.error(f"health_ts error: {e}", exc_info=True)
         return Response(
             {"status": "error", "detail": str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+# ============================================================================
+# DATA POINTS API (Fase R - Opção B)
+# ============================================================================
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_data_points(request):
+    """
+    GET /api/data/points - Retorna dados de telemetria com roteamento automático.
+    
+    Query Params:
+    -------------
+    - device_id: UUID (obrigatório) - Dispositivo IoT
+    - point_id: UUID (obrigatório) - Ponto de medição (sensor/tag)
+    - start: ISO datetime (obrigatório) - Início da janela temporal
+    - end: ISO datetime (obrigatório) - Fim da janela temporal
+    - agg: 'raw' | '1m' | '5m' | '1h' (default: 'raw') - Nível de agregação
+    
+    Roteamento:
+    -----------
+    - agg=raw → ts_measure_tenant (dados brutos, retenção 14d)
+    - agg=1m → ts_measure_1m_tenant (agregação 1min, retenção 365d)
+    - agg=5m → ts_measure_5m_tenant (agregação 5min, retenção 730d)
+    - agg=1h → ts_measure_1h_tenant (agregação 1h, retenção 1825d)
+    
+    Degradação Automática:
+    ----------------------
+    Se agg=raw e janela > 14 dias, degrada para agg=1m automaticamente.
+    Response inclui: degraded_from='raw', degraded_to='1m', reason='...'
+    
+    Isolamento:
+    -----------
+    Middleware TenantGucMiddleware configura GUC app.tenant_id.
+    VIEWs *_tenant filtram automaticamente por tenant.
+    Impossível acessar dados de outros tenants (garantido por security_barrier).
+    
+    Respostas:
+    ----------
+    - 200: Dados retornados com sucesso
+    - 400: Parâmetros inválidos (device_id, point_id, start, end ausentes)
+    - 422: Degradação automática aplicada (ainda retorna dados)
+    
+    Exemplos:
+    ---------
+    GET /api/data/points?device_id=<uuid>&point_id=<uuid>&start=2025-10-01T00:00:00Z&end=2025-10-08T23:59:59Z&agg=1h
+    
+    Response:
+    {
+        "data": [
+            {"bucket": "2025-10-01T00:00:00Z", "v_avg": 42.5, "v_max": 45.0, "v_min": 40.0, "n": 60},
+            ...
+        ],
+        "count": 168,
+        "agg": "1h",
+        "start": "2025-10-01T00:00:00Z",
+        "end": "2025-10-08T23:59:59Z"
+    }
+    """
+    from django.utils.dateparse import parse_datetime
+    from datetime import timedelta
+    from .models import TsMeasureTenant, TsMeasure1mTenant, TsMeasure5mTenant, TsMeasure1hTenant
+    from .serializers import TsMeasureRawSerializer, TsMeasureAggSerializer
+    
+    # Validar parâmetros obrigatórios
+    device_id = request.GET.get('device_id')
+    point_id = request.GET.get('point_id')
+    start_str = request.GET.get('start')
+    end_str = request.GET.get('end')
+    agg = request.GET.get('agg', 'raw')
+    
+    if not all([device_id, point_id, start_str, end_str]):
+        return Response(
+            {
+                'error': 'device_id, point_id, start, end são obrigatórios',
+                'required_params': ['device_id', 'point_id', 'start', 'end'],
+                'optional_params': ['agg (default: raw)']
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Parse datetime
+    try:
+        start = parse_datetime(start_str)
+        end = parse_datetime(end_str)
+        
+        if not start or not end:
+            raise ValueError("datetime inválido")
+        
+        if start >= end:
+            return Response(
+                {'error': 'start deve ser menor que end'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    except ValueError as e:
+        return Response(
+            {
+                'error': f'start/end devem ser ISO datetime válidos: {str(e)}',
+                'example': '2025-10-08T14:30:00Z'
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Validar agg
+    valid_aggs = ['raw', '1m', '5m', '1h']
+    if agg not in valid_aggs:
+        return Response(
+            {
+                'error': f"agg='{agg}' inválido",
+                'valid_values': valid_aggs
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Calcular janela temporal
+    window_days = (end - start).days
+    
+    # Degradação automática: raw com window > 14d → usar 1m
+    degraded = False
+    original_agg = agg
+    
+    if agg == 'raw' and window_days > 14:
+        agg = '1m'
+        degraded = True
+        logger.info(
+            f"get_data_points: Degradação automática aplicada "
+            f"(window={window_days}d > 14d, raw → 1m)"
+        )
+    
+    # Roteamento para MODEL correto (VIEW tenant-scoped)
+    if agg == 'raw':
+        model = TsMeasureTenant
+        time_field = 'ts'
+        serializer_class = TsMeasureRawSerializer
+    elif agg == '1m':
+        model = TsMeasure1mTenant
+        time_field = 'bucket'
+        serializer_class = TsMeasureAggSerializer
+    elif agg == '5m':
+        model = TsMeasure5mTenant
+        time_field = 'bucket'
+        serializer_class = TsMeasureAggSerializer
+    elif agg == '1h':
+        model = TsMeasure1hTenant
+        time_field = 'bucket'
+        serializer_class = TsMeasureAggSerializer
+    
+    # Montar filtros (Django ORM)
+    filters = {
+        'device_id': device_id,
+        'point_id': point_id,
+        f'{time_field}__gte': start,
+        f'{time_field}__lte': end
+    }
+    
+    # Executar query (isolamento automático via VIEW + GUC)
+    try:
+        qs = model.objects.filter(**filters).order_by(time_field)
+        
+        # Limite de segurança: máximo 10k pontos
+        MAX_POINTS = 10000
+        data = list(qs[:MAX_POINTS])
+        
+        # Verificar se atingiu limite
+        limit_reached = len(data) == MAX_POINTS
+        
+        # Serializar dados
+        serializer = serializer_class(data, many=True)
+        
+        # Montar response
+        response_data = {
+            'data': serializer.data,
+            'count': len(serializer.data),
+            'agg': agg,
+            'start': start.isoformat(),
+            'end': end.isoformat(),
+            'device_id': device_id,
+            'point_id': point_id,
+        }
+        
+        # Adicionar info de degradação (se aplicável)
+        if degraded:
+            response_data['degraded_from'] = original_agg
+            response_data['degraded_to'] = agg
+            response_data['reason'] = f'window ({window_days}d) exceeds raw retention (14d)'
+        
+        # Adicionar warning se atingiu limite
+        if limit_reached:
+            response_data['warning'] = f'Result limited to {MAX_POINTS} points. Consider using higher aggregation level.'
+        
+        # Status code: 200 se normal, 422 se degradado (mas ainda retorna dados)
+        status_code = status.HTTP_200_OK if not degraded else status.HTTP_UNPROCESSABLE_ENTITY
+        
+        return Response(response_data, status=status_code)
+    
+    except Exception as e:
+        logger.error(f"get_data_points error: {e}", exc_info=True)
+        return Response(
+            {
+                'error': 'Erro ao consultar telemetria',
+                'detail': str(e)
+            },
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

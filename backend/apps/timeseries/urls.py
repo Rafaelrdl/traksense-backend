@@ -35,12 +35,12 @@ Autor: TrakSense Team
 Data: 2025-10-07
 """
 from django.urls import path
-from .views import data_points, health_ts
+from .views import data_points, health_ts, get_data_points
 
 urlpatterns = [
-    # Consulta de telemetria (endpoint principal)
-    # GET /data/points?device_id=xxx&point_id=yyy&from=...&to=...&agg=1m
-    path('data/points', data_points, name='data_points'),
+    # Consulta de telemetria (endpoint principal - NOVO Fase R)
+    # GET /data/points?device_id=xxx&point_id=yyy&start=...&end=...&agg=1m
+    path('data/points', get_data_points, name='get_data_points'),
     
     # Health check do sistema de telemetria
     # GET /health/timeseries

@@ -51,45 +51,172 @@ SELECT add_compression_policy('public.ts_measure', INTERVAL '7 days');
 -- Retention
 SELECT add_retention_policy('public.ts_measure', INTERVAL '365 days');
 
-Como acessar dados:
-------------------
-Não use Django ORM! Use raw SQL ou asyncpg.
+ATUALIZAÇÃO - FASE R (Opção B):
+-------------------------------
+Com a implementação de Continuous Aggregates e isolamento via VIEWs + GUC,
+agora temos models Django unmanaged para acesso às VIEWs tenant-scoped.
 
-Exemplo 1 - Django raw SQL:
-    from django.db import connection
-    with connection.cursor() as cur:
-        cur.execute("SET LOCAL app.tenant_id = %s", [tenant_id])
-        cur.execute("SELECT * FROM public.ts_measure WHERE device_id = %s", [device_id])
-        rows = cur.fetchall()
-
-Exemplo 2 - asyncpg (ingest):
-    async with pool.acquire() as conn:
-        await conn.execute("SET app.tenant_id = $1", tenant_id)
-        await conn.executemany(
-            "INSERT INTO public.ts_measure(...) VALUES (...)", rows
-        )
-
-Ver também:
-----------
-- views.py: queries com agregação (1m/5m/1h)
-- dbutils.py: helpers (set_tenant_guc_for_conn, get_aggregate_view_name)
-- migrations/0001_ts_schema.py: DDL completo (hypertable, RLS, aggregates)
+Ver models abaixo: TsMeasureTenant, TsMeasure1mTenant, etc.
 
 Autor: TrakSense Team
-Data: 2025-10-07
+Data: 2025-10-08 (atualizado Fase R)
 """
 
-# Este arquivo está intencionalmente vazio
-# A tabela ts_measure é criada via SQL migration (0001_ts_schema.py)
-# Não há Django models aqui
+from django.db import models
 
-# Por quê não usar Django ORM?
-# - TimescaleDB hypertables requerem create_hypertable() (SQL nativo)
-# - Continuous aggregates são materialized views (não suportadas por ORM)
-# - RLS com custom GUCs (app.tenant_id) requer SQL nativo
-# - Compression/retention policies são extensões TimescaleDB
 
-# Como acessar dados?
-# - Raw SQL: connection.cursor() + cur.execute()
-# - asyncpg: pool.acquire() + conn.execute() (ingest)
-# - Ver views.py e dbutils.py para helpers
+# ============================================================================
+# MODELS PARA VIEWs TENANT-SCOPED (Fase R - Opção B)
+# ============================================================================
+
+class TsMeasureTenant(models.Model):
+    """
+    MODEL unmanaged para VIEW ts_measure_tenant (dados raw).
+    
+    VIEW SQL:
+    ---------
+    CREATE VIEW ts_measure_tenant WITH (security_barrier = on) AS
+    SELECT tenant_id, device_id, point_id, ts, v_num, v_bool, v_text, 
+           unit, qual, meta
+    FROM public.ts_measure
+    WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid;
+    
+    Isolamento:
+    -----------
+    - Filtro automático por GUC app.tenant_id
+    - Middleware TenantGucMiddleware configura GUC
+    - security_barrier previne bypass via query rewrite
+    
+    Uso:
+    ----
+    # Django ORM (com middleware ativo):
+    TsMeasureTenant.objects.filter(device_id=device_uuid, ts__gte=start)
+    
+    Retenção: 14 dias
+    Compressão: Não
+    API: GET /data/points?agg=raw
+    """
+    tenant_id = models.UUIDField()
+    device_id = models.UUIDField()
+    point_id = models.UUIDField()
+    ts = models.DateTimeField()
+    v_num = models.FloatField(null=True, blank=True)
+    v_bool = models.BooleanField(null=True, blank=True)
+    v_text = models.TextField(null=True, blank=True)
+    unit = models.CharField(max_length=50, null=True, blank=True)
+    qual = models.SmallIntegerField(default=0)
+    meta = models.JSONField(null=True, blank=True)
+    
+    class Meta:
+        managed = False  # VIEW criada em migration, Django não gerencia
+        db_table = 'ts_measure_tenant'
+        ordering = ['-ts']
+        verbose_name = 'Telemetry (Raw, Tenant-Scoped)'
+        verbose_name_plural = 'Telemetry (Raw, Tenant-Scoped)'
+    
+    def __str__(self):
+        return f"{self.device_id}/{self.point_id} @ {self.ts}"
+
+
+class TsMeasure1mTenant(models.Model):
+    """
+    MODEL unmanaged para VIEW ts_measure_1m_tenant (CAGG 1 minuto).
+    
+    VIEW SQL:
+    ---------
+    CREATE VIEW ts_measure_1m_tenant WITH (security_barrier = on) AS
+    SELECT bucket, tenant_id, device_id, point_id, v_avg, v_max, v_min, n
+    FROM public.ts_measure_1m
+    WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid;
+    
+    CAGG Base:
+    ----------
+    - time_bucket('1 minute', ts) AS bucket
+    - AVG(v_num), MAX(v_num), MIN(v_num), COUNT(v_num)
+    - Refresh: a cada 1 minuto, janela [now()-14d, now()-1m]
+    
+    Uso:
+    ----
+    TsMeasure1mTenant.objects.filter(device_id=device_uuid, bucket__gte=start)
+    
+    Retenção: 365 dias (1 ano)
+    Compressão: Sim (chunks > 7 dias)
+    API: GET /data/points?agg=1m
+    """
+    bucket = models.DateTimeField(primary_key=True)  # time_bucket
+    tenant_id = models.UUIDField()
+    device_id = models.UUIDField()
+    point_id = models.UUIDField()
+    v_avg = models.FloatField(null=True)
+    v_max = models.FloatField(null=True)
+    v_min = models.FloatField(null=True)
+    n = models.IntegerField()  # count
+    
+    class Meta:
+        managed = False
+        db_table = 'ts_measure_1m_tenant'
+        ordering = ['-bucket']
+        unique_together = ['bucket', 'tenant_id', 'device_id', 'point_id']
+        verbose_name = 'Telemetry (1min Aggregate, Tenant-Scoped)'
+        verbose_name_plural = 'Telemetry (1min Aggregates, Tenant-Scoped)'
+    
+    def __str__(self):
+        return f"{self.device_id}/{self.point_id} @ {self.bucket} (1m agg)"
+
+
+class TsMeasure5mTenant(models.Model):
+    """
+    MODEL unmanaged para VIEW ts_measure_5m_tenant (CAGG 5 minutos).
+    
+    Retenção: 730 dias (2 anos)
+    Compressão: Sim (chunks > 7 dias)
+    API: GET /data/points?agg=5m
+    """
+    bucket = models.DateTimeField(primary_key=True)
+    tenant_id = models.UUIDField()
+    device_id = models.UUIDField()
+    point_id = models.UUIDField()
+    v_avg = models.FloatField(null=True)
+    v_max = models.FloatField(null=True)
+    v_min = models.FloatField(null=True)
+    n = models.IntegerField()
+    
+    class Meta:
+        managed = False
+        db_table = 'ts_measure_5m_tenant'
+        ordering = ['-bucket']
+        unique_together = ['bucket', 'tenant_id', 'device_id', 'point_id']
+        verbose_name = 'Telemetry (5min Aggregate, Tenant-Scoped)'
+        verbose_name_plural = 'Telemetry (5min Aggregates, Tenant-Scoped)'
+    
+    def __str__(self):
+        return f"{self.device_id}/{self.point_id} @ {self.bucket} (5m agg)"
+
+
+class TsMeasure1hTenant(models.Model):
+    """
+    MODEL unmanaged para VIEW ts_measure_1h_tenant (CAGG 1 hora).
+    
+    Retenção: 1825 dias (5 anos)
+    Compressão: Sim (chunks > 14 dias)
+    API: GET /data/points?agg=1h
+    """
+    bucket = models.DateTimeField(primary_key=True)
+    tenant_id = models.UUIDField()
+    device_id = models.UUIDField()
+    point_id = models.UUIDField()
+    v_avg = models.FloatField(null=True)
+    v_max = models.FloatField(null=True)
+    v_min = models.FloatField(null=True)
+    n = models.IntegerField()
+    
+    class Meta:
+        managed = False
+        db_table = 'ts_measure_1h_tenant'
+        ordering = ['-bucket']
+        unique_together = ['bucket', 'tenant_id', 'device_id', 'point_id']
+        verbose_name = 'Telemetry (1hour Aggregate, Tenant-Scoped)'
+        verbose_name_plural = 'Telemetry (1hour Aggregates, Tenant-Scoped)'
+    
+    def __str__(self):
+        return f"{self.device_id}/{self.point_id} @ {self.bucket} (1h agg)"
