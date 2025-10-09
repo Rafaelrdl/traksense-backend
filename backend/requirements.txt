@@ -54,6 +54,29 @@ django-environ>=0.11
 djangorestframework>=3.15
 
 # ----------------------------------------------------------------------------
+# JWT Authentication
+# ----------------------------------------------------------------------------
+# djangorestframework-simplejwt: JSON Web Token authentication para DRF
+# - Access tokens (curta duração: 15 min)
+# - Refresh tokens (longa duração: 7 dias)
+# - Token rotation e blacklist
+# - Integração com django.contrib.auth
+# Usado em: /api/auth/login/, /api/auth/refresh/, /api/auth/logout/
+# Docs: https://django-rest-framework-simplejwt.readthedocs.io/
+djangorestframework-simplejwt>=5.3
+
+# ----------------------------------------------------------------------------
+# CORS Headers
+# ----------------------------------------------------------------------------
+# django-cors-headers: Cross-Origin Resource Sharing (CORS)
+# - Permite requisições do frontend (localhost:5173)
+# - Suporte a credenciais (cookies, JWT tokens)
+# - Configurável por origem, método e header
+# Usado em: Integração frontend React com backend Django
+# Docs: https://github.com/adamchainz/django-cors-headers
+django-cors-headers>=4.3
+
+# ----------------------------------------------------------------------------
 # API Documentation (Swagger/OpenAPI)
 # ----------------------------------------------------------------------------
 # drf-spectacular: Geração automática de documentação OpenAPI 3.0

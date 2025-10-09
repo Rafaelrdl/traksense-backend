@@ -105,6 +105,13 @@ SHARED_APPS = [
     # Django REST Framework
     'rest_framework',
     
+    # JWT Authentication
+    'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
+    
+    # CORS Headers (permite requisições do frontend)
+    'corsheaders',
+    
     # API Documentation (Swagger/OpenAPI)
     'drf_spectacular',
 ]
@@ -144,6 +151,9 @@ MIDDLEWARE = [
     # Identifica o tenant baseado no domínio da requisição
     # Define connection.tenant para uso posterior
     'django_tenants.middleware.main.TenantMainMiddleware',
+    
+    # CORS Headers (DEVE vir antes de CommonMiddleware)
+    'corsheaders.middleware.CorsMiddleware',
     
     # Django middlewares padrão
     'django.middleware.security.SecurityMiddleware',
@@ -263,9 +273,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # ============================================================================
 
 REST_FRAMEWORK = {
-    # Autenticação padrão: Session (cookies)
-    # Produção: adicionar TokenAuthentication ou JWTAuthentication
+    # Autenticação: JWT + Session (cookies)
+    # JWT usado para API frontend, Session para admin e endpoints internos
     'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
     
@@ -288,6 +299,65 @@ REST_FRAMEWORK = {
     # API Documentation: drf-spectacular (Swagger/OpenAPI 3.0)
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
+
+# ============================================================================
+# SIMPLE JWT CONFIGURATION
+# ============================================================================
+
+from datetime import timedelta
+
+SIMPLE_JWT = {
+    # Access token expira em 15 minutos
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
+    
+    # Refresh token expira em 7 dias
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    
+    # Rotacionar refresh tokens (gera novo refresh a cada uso)
+    'ROTATE_REFRESH_TOKENS': True,
+    
+    # Blacklist refresh tokens após rotação (segurança)
+    'BLACKLIST_AFTER_ROTATION': True,
+    
+    # Algoritmo de assinatura JWT
+    'ALGORITHM': 'HS256',
+    
+    # Tipo do header Authorization
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    
+    # Nome do claim do user ID
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+}
+
+# ============================================================================
+# CORS CONFIGURATION
+# ============================================================================
+
+# Permitir requisições do frontend (localhost:5173 = Vite dev server)
+CORS_ALLOWED_ORIGINS = env.list(
+    'CORS_ALLOWED_ORIGINS',
+    default=[
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+    ]
+)
+
+# Permitir envio de cookies e credenciais (necessário para JWT)
+CORS_ALLOW_CREDENTIALS = True
+
+# Headers permitidos nas requisições
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
 
 # ============================================================================
 # DRF-SPECTACULAR: SWAGGER/OPENAPI DOCUMENTATION

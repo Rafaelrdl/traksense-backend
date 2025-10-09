@@ -42,19 +42,19 @@ def reverse_uuids(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        # Tenancy usa django-tenants sem 0001_initial própria
+        ('tenancy', '0000_initial_tables'),
     ]
 
     operations = [
-        # Adicionar coluna UUID nullable
+        # Adicionar coluna UUID nullable (se não existir)
         migrations.RunSQL(
             sql="""
             ALTER TABLE public.tenancy_client 
-            ADD COLUMN uuid UUID NULL UNIQUE;
+            ADD COLUMN IF NOT EXISTS uuid UUID NULL UNIQUE;
             """,
             reverse_sql="""
             ALTER TABLE public.tenancy_client 
-            DROP COLUMN uuid;
+            DROP COLUMN IF EXISTS uuid;
             """
         ),
         # Popular com UUIDs determinísticos

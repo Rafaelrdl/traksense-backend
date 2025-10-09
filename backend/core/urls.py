@@ -74,6 +74,31 @@ urlpatterns = [
     path('', include('health.urls')),
     
     # --------------------------------------------------------------------------
+    # Authentication (JWT)
+    # --------------------------------------------------------------------------
+    # Endpoints de autenticação JWT
+    # - POST /api/auth/login/ → Login (username/password → tokens + user)
+    # - POST /api/auth/refresh/ → Refresh access token
+    # - POST /api/auth/logout/ → Logout (blacklist refresh token)
+    #
+    # Exemplo Login:
+    # POST /api/auth/login/
+    # Body: {"username": "admin", "password": "admin"}
+    # Response: {"access": "...", "refresh": "...", "user": {...}}
+    #
+    # Exemplo Refresh:
+    # POST /api/auth/refresh/
+    # Body: {"refresh": "<refresh_token>"}
+    # Response: {"access": "<new_access_token>"}
+    #
+    # Exemplo Logout:
+    # POST /api/auth/logout/
+    # Headers: Authorization: Bearer <access_token>
+    # Body: {"refresh": "<refresh_token>"}
+    # Response: {"detail": "Logout realizado com sucesso"}
+    path('api/auth/', include('apps.auth.urls')),
+    
+    # --------------------------------------------------------------------------
     # Timeseries API
     # --------------------------------------------------------------------------
     # Endpoints para consulta de dados de telemetria
