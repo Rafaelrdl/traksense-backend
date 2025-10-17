@@ -108,11 +108,7 @@ services:
       context: ..
       dockerfile: docker/api/Dockerfile
     container_name: traksense-api
-    command: >
-      sh -c "
-        python manage.py migrate_schemas --noinput &&
-        gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --reload
-      "
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --reload
     environment:
       DJANGO_SECRET_KEY: dev-secret-key-change-in-production-minimum-50-characters-long
       DJANGO_SETTINGS_MODULE: config.settings.development

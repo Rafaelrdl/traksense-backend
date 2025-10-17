@@ -27,6 +27,7 @@ ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost').split(',')
 # Application definition
 SHARED_APPS = [
     'django_tenants',  # Must be first
+    'apps.accounts',  # Must be before auth for custom user model
     'django.contrib.contenttypes',
     'django.contrib.auth',
     'django.contrib.sessions',
@@ -44,15 +45,13 @@ SHARED_APPS = [
 ]
 
 TENANT_APPS = [
+    'apps.accounts',  # Must be before auth for custom user model
     'django.contrib.contenttypes',
     'django.contrib.auth',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.admin',
-    
-    # Local tenant apps
-    'apps.accounts',
 ]
 
 INSTALLED_APPS = list(SHARED_APPS) + [
