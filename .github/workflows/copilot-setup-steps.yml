@@ -1,0 +1,132 @@
+name: "Copilot Setup Steps"
+
+on:
+  # Facilita validar manualmente e quando o próprio arquivo mudar
+  workflow_dispatch:
+  push:
+    paths: [".github/workflows/copilot-setup-steps.yml"]
+  pull_request:
+    paths: [".github/workflows/copilot-setup-steps.yml"]
+
+jobs:
+  # O nome do job PRECISA ser exatamente este
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    # Serviços que o agente poderá usar nos testes (Postgres+Timescale, Redis, MinIO, MQTT, Mailpit)
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg16-oss
+        # Timescale é uma extensão do Postgres; usaremos psql para CREATE EXTENSION
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        options: >-
+          --health-cmd="pg_isready -U app -d app"
+          --health-interval=5s --health-timeout=3s --health-retries=20
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping || exit 1"
+          --health-interval=5s --health-timeout=3s --health-retries=20
+
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin123
+        ports:
+          - 9000:9000    # API
+          - 9001:9001    # Console
+        options: >-
+          --health-cmd="curl -sSf http://127.0.0.1:9000/minio/health/ready || exit 1"
+          --health-interval=5s --health-timeout=3s --health-retries=30
+        command: server /data --console-address ":9001"
+
+      emqx:
+        image: emqx/emqx:latest
+        # Portas padrão: 1883 (MQTT), 8883 (TLS), 8083 (WS), 8084 (WSS), 18083 (dashboard)
+        ports:
+          - 1883:1883
+          - 8883:8883
+          - 8083:8083
+          - 8084:8084
+          - 18083:18083
+        options: >-
+          --health-cmd="wget -qO- http://127.0.0.1:18083 || exit 1"
+          --health-interval=5s --health-timeout=3s --health-retries=30
+
+      mailpit:
+        image: axllent/mailpit:latest
+        # 1025 = SMTP, 8025 = UI
+        ports:
+          - 1025:1025
+          - 8025:8025
+        options: >-
+          --health-cmd="wget -qO- http://127.0.0.1:8025/healthz || exit 1"
+          --health-interval=5s --health-timeout=3s --health-retries=30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system deps (psql, libpq)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Wait for Postgres & enable Timescale extension
+        env:
+          PGPASSWORD: app
+        run: |
+          set -euo pipefail
+          until psql -h localhost -p 5432 -U app -d app -c "SELECT 1;" >/dev/null 2>&1; do
+            echo "Aguardando Postgres/Timescale..."
+            sleep 2
+          done
+          psql -h localhost -p 5432 -U app -d app -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
+
+      - name: Verify MinIO ready
+        run: |
+          set -euo pipefail
+          for i in {1..60}; do
+            curl -sf http://localhost:9000/minio/health/ready && exit 0
+            sleep 2
+          done
+          echo "MinIO não ficou pronto a tempo" && exit 1
+
+      - name: Verify EMQX TCP (1883)
+        run: |
+          bash -lc 'for i in {1..60}; do (echo > /dev/tcp/localhost/1883) >/dev/null 2>&1 && exit 0 || sleep 2; done; exit 1'
+
+      # Dica prática do time .NET MAUI: continue-on-error mantém logs mesmo se build/tests falharem
+      - name: Dummy build (placeholder) - keep logs on failure
+        continue-on-error: true
+        run: |
+          echo "Quando o backend existir, rode lint/test aqui (ex.: make ci)"
+          python --version
+
+      # Opcional: exportar variáveis para o agente usar como defaults
+      - name: Export default env hints for agent
+        run: |
+          echo "DB_URL=postgres://app:app@localhost:5432/app" >> $GITHUB_ENV
+          echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
+          echo "MINIO_ENDPOINT=http://localhost:9000" >> $GITHUB_ENV
+          echo "MINIO_ROOT_USER=minioadmin" >> $GITHUB_ENV
+          echo "MINIO_ROOT_PASSWORD=minioadmin123" >> $GITHUB_ENV
+          echo "EMQX_URL=mqtt://localhost:1883" >> $GITHUB_ENV
+          echo "MAILPIT_SMTP=localhost:1025" >> $GITHUB_ENV
