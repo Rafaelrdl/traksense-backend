@@ -50,7 +50,7 @@ jobs:
         options: >-
           --health-cmd="curl -sSf http://127.0.0.1:9000/minio/health/ready || exit 1"
           --health-interval=5s --health-timeout=3s --health-retries=30
-        command: server /data --console-address ":9001"
+          command: server /data --console-address ":9001"
 
       emqx:
         image: emqx/emqx:latest

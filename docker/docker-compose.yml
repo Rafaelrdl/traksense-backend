@@ -1,0 +1,232 @@
+version: '3.9'
+
+services:
+  # PostgreSQL with TimescaleDB extension
+  postgres:
+    image: timescale/timescaledb:latest-pg16-oss
+    container_name: traksense-postgres
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-timescale.sh:/docker-entrypoint-initdb.d/init-timescale.sh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - traksense
+
+  # Redis for caching and Celery broker
+  redis:
+    image: redis:7-alpine
+    container_name: traksense-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - traksense
+
+  # MinIO for S3-compatible object storage
+  minio:
+    image: minio/minio:latest
+    container_name: traksense-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"  # API
+      - "9001:9001"  # Console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      - traksense
+
+  # EMQX for MQTT messaging
+  emqx:
+    image: emqx/emqx:latest
+    container_name: traksense-emqx
+    ports:
+      - "1883:1883"   # MQTT
+      - "8883:8883"   # MQTT/SSL
+      - "8083:8083"   # WebSocket
+      - "8084:8084"   # WebSocket/SSL
+      - "18083:18083" # Dashboard
+    volumes:
+      - emqx_data:/opt/emqx/data
+      - emqx_log:/opt/emqx/log
+    environment:
+      EMQX_NAME: traksense
+      EMQX_HOST: 127.0.0.1
+    healthcheck:
+      test: ["CMD", "emqx", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      - traksense
+
+  # Mailpit for SMTP testing
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: traksense-mailpit
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    environment:
+      MP_MAX_MESSAGES: 5000
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8025/"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      - traksense
+
+  # Django API
+  api:
+    build:
+      context: ..
+      dockerfile: docker/api/Dockerfile
+    container_name: traksense-api
+    command: >
+      sh -c "
+        python manage.py migrate_schemas --noinput &&
+        gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --reload
+      "
+    environment:
+      DJANGO_SECRET_KEY: dev-secret-key-change-in-production-minimum-50-characters-long
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DEBUG: "True"
+      DB_NAME: app
+      DB_USER: app
+      DB_PASSWORD: app
+      DB_HOST: postgres
+      DB_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      MINIO_BUCKET: files
+      MINIO_USE_SSL: "False"
+      EMQX_URL: mqtt://emqx:1883
+      MAILPIT_SMTP_HOST: mailpit
+      MAILPIT_SMTP_PORT: 1025
+      ALLOWED_HOSTS: localhost,umc.localhost,api,*.localhost
+      CORS_ORIGINS: http://localhost:5173,http://umc.localhost:5173
+    ports:
+      - "8000:8000"
+    volumes:
+      - ..:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      emqx:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
+    networks:
+      - traksense
+
+  # Celery Worker
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/api/Dockerfile
+    container_name: traksense-worker
+    command: celery -A config worker --loglevel=info
+    environment:
+      DJANGO_SECRET_KEY: dev-secret-key-change-in-production-minimum-50-characters-long
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DB_NAME: app
+      DB_USER: app
+      DB_PASSWORD: app
+      DB_HOST: postgres
+      DB_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      EMQX_URL: mqtt://emqx:1883
+    volumes:
+      - ..:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - traksense
+
+  # Celery Beat (Scheduler)
+  scheduler:
+    build:
+      context: ..
+      dockerfile: docker/api/Dockerfile
+    container_name: traksense-scheduler
+    command: celery -A config beat --loglevel=info
+    environment:
+      DJANGO_SECRET_KEY: dev-secret-key-change-in-production-minimum-50-characters-long
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DB_NAME: app
+      DB_USER: app
+      DB_PASSWORD: app
+      DB_HOST: postgres
+      DB_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ..:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - traksense
+
+  # Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: traksense-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+    networks:
+      - traksense
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  emqx_data:
+  emqx_log:
+
+networks:
+  traksense:
+    driver: bridge
