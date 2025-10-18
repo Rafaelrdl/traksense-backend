@@ -393,3 +393,185 @@ def telemetry_export_csv(request):
                 ])
     
     return response
+
+
+@staff_member_required
+@require_http_methods(["GET"])
+def telemetry_dashboard(request):
+    """
+    Dashboard view with interactive charts for telemetry visualization.
+    
+    Displays time-series charts for selected sensors with Chart.js.
+    Supports multiple sensors comparison on the same chart.
+    
+    Query parameters:
+    - tenant_slug (required): Tenant to query
+    - sensor_ids (optional): Comma-separated sensor IDs
+    - from_timestamp (optional): ISO-8601 start time
+    - to_timestamp (optional): ISO-8601 end time
+    - bucket (optional): Aggregation interval (1m, 5m, 1h, default: 5m)
+    """
+    Tenant = get_tenant_model()
+    tenants = Tenant.objects.only("name", "slug", "schema_name").order_by("name")
+    
+    tenant_slug = request.GET.get('tenant_slug')
+    sensor_ids_param = request.GET.get('sensor_ids', '')
+    sensor_ids = [s.strip() for s in sensor_ids_param.split(',') if s.strip()]
+    from_ts = request.GET.get('from_timestamp')
+    to_ts = request.GET.get('to_timestamp')
+    bucket = request.GET.get('bucket', '5m')
+    
+    context = {
+        'tenants': tenants,
+        'tenant_slug': tenant_slug,
+        'sensor_ids': sensor_ids,
+        'sensor_ids_param': sensor_ids_param,
+        'from_timestamp': from_ts,
+        'to_timestamp': to_ts,
+        'bucket': bucket,
+        'current_schema': getattr(connection, "schema_name", None),
+    }
+    
+    # Get available sensors if tenant is selected
+    if tenant_slug:
+        try:
+            tenant = Tenant.objects.get(slug=tenant_slug)
+            context['tenant'] = tenant
+            
+            # Get list of available sensors in this tenant
+            with schema_context(tenant.schema_name):
+                sql = """
+                    SELECT DISTINCT sensor_id
+                    FROM reading
+                    ORDER BY sensor_id
+                    LIMIT 50
+                """
+                with connection.cursor() as cursor:
+                    cursor.execute(sql)
+                    available_sensors = [row[0] for row in cursor.fetchall()]
+                context['available_sensors'] = available_sensors
+        except Tenant.DoesNotExist:
+            pass
+    
+    return render(request, "ops/dashboard.html", context)
+
+
+@staff_member_required
+@require_http_methods(["GET"])
+def chart_data_api(request):
+    """
+    API endpoint to fetch chart data in JSON format for Chart.js.
+    
+    Returns aggregated telemetry data for the specified sensors.
+    
+    Query parameters:
+    - tenant_slug (required): Tenant to query
+    - sensor_ids (required): Comma-separated sensor IDs
+    - from_timestamp (optional): ISO-8601 start time
+    - to_timestamp (optional): ISO-8601 end time
+    - bucket (optional): Aggregation interval (1m, 5m, 1h, default: 5m)
+    - limit (optional): Max data points per sensor (default: 500, max: 1000)
+    """
+    tenant_slug = request.GET.get('tenant_slug')
+    sensor_ids_param = request.GET.get('sensor_ids', '')
+    sensor_ids = [s.strip() for s in sensor_ids_param.split(',') if s.strip()]
+    from_ts = request.GET.get('from_timestamp')
+    to_ts = request.GET.get('to_timestamp')
+    bucket = request.GET.get('bucket', '5m')
+    
+    try:
+        limit = int(request.GET.get('limit', 500))
+        limit = min(max(limit, 1), 1000)  # Clamp between 1-1000
+    except (ValueError, TypeError):
+        limit = 500
+    
+    if not (tenant_slug and sensor_ids):
+        return JsonResponse({
+            'error': 'tenant_slug and sensor_ids are required'
+        }, status=400)
+    
+    # Limit to 10 sensors max for performance
+    if len(sensor_ids) > 10:
+        return JsonResponse({
+            'error': 'Maximum 10 sensors allowed'
+        }, status=400)
+    
+    # Get tenant
+    Tenant = get_tenant_model()
+    try:
+        tenant = Tenant.objects.get(slug=tenant_slug)
+    except Tenant.DoesNotExist:
+        return JsonResponse({
+            'error': f"Tenant '{tenant_slug}' not found"
+        }, status=404)
+    
+    # Bucket intervals
+    bucket_intervals = {
+        '1m': '1 minute',
+        '5m': '5 minutes',
+        '1h': '1 hour',
+    }
+    
+    if bucket not in bucket_intervals:
+        bucket = '5m'
+    
+    # Query data for each sensor
+    datasets = []
+    
+    with schema_context(tenant.schema_name):
+        for sensor_id in sensor_ids:
+            sql = """
+                SELECT 
+                    time_bucket(%(bucket_interval)s, ts) AS bucket,
+                    avg(value) AS avg_value,
+                    min(value) AS min_value,
+                    max(value) AS max_value,
+                    count(*) AS count
+                FROM reading
+                WHERE sensor_id = %(sensor_id)s
+                  AND (%(ts_from)s IS NULL OR ts >= %(ts_from)s::timestamptz)
+                  AND (%(ts_to)s IS NULL OR ts <= %(ts_to)s::timestamptz)
+                GROUP BY bucket
+                ORDER BY bucket ASC
+                LIMIT %(limit)s
+            """
+            
+            params = {
+                'bucket_interval': bucket_intervals[bucket],
+                'sensor_id': sensor_id,
+                'ts_from': from_ts or None,
+                'ts_to': to_ts or None,
+                'limit': limit,
+            }
+            
+            with connection.cursor() as cursor:
+                cursor.execute(sql, params)
+                rows = cursor.fetchall()
+                
+                # Format data for Chart.js
+                data_points = []
+                for row in rows:
+                    data_points.append({
+                        'x': row[0].isoformat() if row[0] else None,
+                        'y': float(row[1]) if row[1] is not None else None,
+                        'min': float(row[2]) if row[2] is not None else None,
+                        'max': float(row[3]) if row[3] is not None else None,
+                        'count': row[4] or 0,
+                    })
+                
+                datasets.append({
+                    'label': sensor_id,
+                    'data': data_points,
+                    'sensor_id': sensor_id,
+                })
+    
+    return JsonResponse({
+        'tenant': {
+            'slug': tenant.slug,
+            'name': tenant.name,
+        },
+        'bucket': bucket,
+        'from_timestamp': from_ts,
+        'to_timestamp': to_ts,
+        'datasets': datasets,
+    })
