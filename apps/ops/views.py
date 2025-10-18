@@ -10,17 +10,24 @@ References:
 - CSRF protection: https://docs.djangoproject.com/en/5.2/howto/csrf/
 """
 from django.contrib.admin.views.decorators import staff_member_required
-from django.shortcuts import render, get_object_or_404
+from django.shortcuts import render, get_object_or_404, redirect
 from django.http import HttpResponseBadRequest, HttpResponse, JsonResponse
 from django.db import connection
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 from django_tenants.utils import schema_context, get_tenant_model
+from django.contrib import messages
+from celery.result import AsyncResult
 import csv
 import datetime as dt
 from decimal import Decimal
+import time
 
 from .forms import TelemetryFilterForm
+from .models import ExportJob, AuditLog
+from .tasks import export_telemetry_async
+from .decorators import audit_action
+from .utils import get_cached_tenants
 
 
 @staff_member_required
@@ -31,9 +38,11 @@ def index(request):
     
     Displays list of all tenants for selection and telemetry filter options.
     Staff-only access enforced by @staff_member_required decorator.
+    
+    Uses Redis cache for tenant list (5min TTL) for better performance.
     """
-    Tenant = get_tenant_model()
-    tenants = Tenant.objects.only("name", "slug", "schema_name").order_by("name")
+    # Get tenants from cache (auto-populated on cache miss)
+    tenants = get_cached_tenants()
     
     form = TelemetryFilterForm()
     
@@ -405,6 +414,8 @@ def telemetry_dashboard(request):
     Displays time-series charts for selected sensors with Chart.js.
     Supports multiple sensors comparison on the same chart.
     
+    Uses Redis cache for tenant list (5min TTL) for better performance.
+    
     Query parameters:
     - tenant_slug (required): Tenant to query
     - sensor_ids (optional): Comma-separated sensor IDs
@@ -412,8 +423,8 @@ def telemetry_dashboard(request):
     - to_timestamp (optional): ISO-8601 end time
     - bucket (optional): Aggregation interval (1m, 5m, 1h, default: 5m)
     """
-    Tenant = get_tenant_model()
-    tenants = Tenant.objects.only("name", "slug", "schema_name").order_by("name")
+    # Get tenants from cache
+    tenants = get_cached_tenants()
     
     tenant_slug = request.GET.get('tenant_slug')
     sensor_ids_param = request.GET.get('sensor_ids', '')
@@ -435,6 +446,7 @@ def telemetry_dashboard(request):
     
     # Get available sensors if tenant is selected
     if tenant_slug:
+        Tenant = get_tenant_model()
         try:
             tenant = Tenant.objects.get(slug=tenant_slug)
             context['tenant'] = tenant
@@ -588,6 +600,8 @@ def export_list(request):
     """
     List all export jobs for current user.
     Shows status, download links, and allows creating new exports.
+    
+    Uses Redis cache for tenant list (5min TTL) for better performance.
     """
     from .models import ExportJob
     
@@ -599,9 +613,8 @@ def export_list(request):
     
     jobs = jobs.select_related('user').order_by('-created_at')[:50]
     
-    # Get tenants for new export form
-    Tenant = get_tenant_model()
-    tenants = Tenant.objects.only("name", "slug").order_by("name")
+    # Get tenants from cache for new export form
+    tenants = get_cached_tenants()
     
     return render(request, "ops/export_list.html", {
         "jobs": jobs,
