@@ -234,7 +234,18 @@ ORDER BY id DESC LIMIT 1;
 - ✅ Telemetry read-only (dados imutáveis)
 
 **Acesso**: http://localhost:8000/admin  
-**Credenciais**: (conforme seed_dev.py)
+**Credenciais**:
+- **Username**: `admin`
+- **Password**: `Admin@123456`
+- **Schema**: `public` (admin centralizado)
+
+⚠️ **IMPORTANTE**: O admin está centralizado no schema público e gerencia apenas:
+- ✅ Tenants (organizações)
+- ✅ Domains (mapeamento de domínios)
+- ✅ Users (superusers globais)
+- ❌ Telemetry (NÃO disponível - é tenant-específico, acesse via API)
+
+📖 **Documentação completa**: Veja `docs/ADMIN_ARCHITECTURE.md`
 
 ---
 

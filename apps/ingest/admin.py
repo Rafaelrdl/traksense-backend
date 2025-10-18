@@ -5,7 +5,15 @@ import json
 from .models import Telemetry
 
 
-@admin.register(Telemetry)
+# NOTE: TelemetryAdmin is NOT registered in the centralized admin (public schema)
+# Reason: Telemetry is a TENANT_APPS model, exists only in tenant schemas.
+# The centralized admin in public schema should only manage:
+#   - Tenants (SHARED_APPS)
+#   - Domains (SHARED_APPS)
+#   - Users (SHARED_APPS)
+# Telemetry data is tenant-specific and should be accessed via tenant-specific interfaces.
+
+# @admin.register(Telemetry)  # DISABLED - Not available in public schema
 class TelemetryAdmin(admin.ModelAdmin):
     """
     Admin interface for Telemetry (MQTT ingested data).
