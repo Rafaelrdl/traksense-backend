@@ -61,3 +61,71 @@ class Telemetry(models.Model):
     
     def __str__(self):
         return f"{self.device_id} - {self.topic} @ {self.timestamp}"
+
+
+class Reading(models.Model):
+    """
+    Structured sensor readings for TimescaleDB Continuous Aggregates.
+    
+    This model stores normalized sensor readings with numeric values,
+    optimized for time-series aggregations (avg, min, max, percentiles).
+    Continuous Aggregates (1m/5m/1h) are created on this table.
+    
+    Use this for numeric sensor data (temperature, humidity, etc.).
+    Use Telemetry for raw MQTT messages with complex payloads.
+    
+    Note: No explicit primary key to avoid TimescaleDB constraint issues.
+    Django will create default 'id' field, indexes provide uniqueness.
+    """
+    
+    # Device & Sensor identification
+    device_id = models.CharField(
+        max_length=255,
+        db_index=True,
+        help_text="Device identifier (from MQTT client)"
+    )
+    
+    sensor_id = models.CharField(
+        max_length=255,
+        db_index=True,
+        help_text="Sensor identifier (e.g., temp_001, humidity_002)"
+    )
+    
+    # Measurement
+    value = models.FloatField(
+        help_text="Numeric sensor reading value"
+    )
+    
+    # Optional labels for filtering (JSON)
+    labels = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Optional metadata (location, unit, etc.)"
+    )
+    
+    # Timestamp (partition column for hypertable)
+    ts = models.DateTimeField(
+        db_index=True,
+        help_text="Measurement timestamp (used for TimescaleDB partitioning)"
+    )
+    
+    # Internal timestamp
+    created_at = models.DateTimeField(
+        default=timezone.now,
+        help_text="When record was inserted into database"
+    )
+    
+    class Meta:
+        db_table = 'reading'
+        ordering = ['-ts']
+        verbose_name = 'Reading'
+        verbose_name_plural = 'Readings'
+        indexes = [
+            models.Index(fields=['device_id', 'sensor_id', 'ts']),
+            models.Index(fields=['sensor_id', 'ts']),
+            models.Index(fields=['id']),  # For queries by ID
+        ]
+        # Note: TimescaleDB hypertable + Continuous Aggregates via migration
+    
+    def __str__(self):
+        return f"{self.sensor_id} = {self.value} @ {self.ts}"
