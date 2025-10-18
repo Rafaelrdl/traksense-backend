@@ -3,7 +3,7 @@
 {% block title %}Dashboard - Control Center{% endblock %}
 
 {% block breadcrumb %}
-<li class="breadcrumb-item"><a href="{% url 'ops:index' %}">Home</a></li>
+<li class="breadcrumb-item"><a href="{% url 'ops:index' %}">Início</a></li>
 <li class="breadcrumb-item active" aria-current="page">Dashboard</li>
 {% endblock %}
 
@@ -15,11 +15,11 @@
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" class="bi bi-graph-up-arrow me-2" viewBox="0 0 16 16">
                     <path fill-rule="evenodd" d="M0 0h1v15h15v1H0zm10 3.5a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-1 0V4.9l-3.613 4.417a.5.5 0 0 1-.74.037L7.06 6.767l-3.656 5.027a.5.5 0 0 1-.808-.588l4-5.5a.5.5 0 0 1 .758-.06l2.609 2.61L13.445 4H10.5a.5.5 0 0 1-.5-.5"/>
                 </svg>
-                Telemetry Dashboard
+                Dashboard de Telemetria
             </h2>
             
             <div class="alert alert-info">
-                <strong>Interactive Charts:</strong> Visualize temporal trends and compare multiple sensors on the same chart.
+                <strong>Gráficos Interativos:</strong> Visualize tendências temporais e compare múltiplos sensores no mesmo gráfico.
             </div>
 
             <!-- Filter Form -->
@@ -30,7 +30,7 @@
                             <strong>Tenant *</strong>
                         </label>
                         <select name="tenant_slug" id="id_tenant_slug" class="form-select" required onchange="this.form.submit()">
-                            <option value="">-- Select Tenant --</option>
+                            <option value="">-- Selecione um Tenant --</option>
                             {% for t in tenants %}
                             <option value="{{ t.slug }}" {% if t.slug == tenant_slug %}selected{% endif %}>
                                 {{ t.name }} ({{ t.slug }})
@@ -40,18 +40,18 @@
                     </div>
                     
                     <div class="col-md-3">
-                        <label for="id_bucket" class="form-label">Aggregation</label>
+                        <label for="id_bucket" class="form-label">Agregação</label>
                         <select name="bucket" id="id_bucket" class="form-select">
-                            <option value="1m" {% if bucket == '1m' %}selected{% endif %}>1 minute</option>
-                            <option value="5m" {% if bucket == '5m' %}selected{% endif %}>5 minutes</option>
-                            <option value="1h" {% if bucket == '1h' %}selected{% endif %}>1 hour</option>
+                            <option value="1m" {% if bucket == '1m' %}selected{% endif %}>1 minuto</option>
+                            <option value="5m" {% if bucket == '5m' %}selected{% endif %}>5 minutos</option>
+                            <option value="1h" {% if bucket == '1h' %}selected{% endif %}>1 hora</option>
                         </select>
                     </div>
                     
                     <div class="col-md-3">
                         <label class="form-label">&nbsp;</label>
                         <button type="button" id="updateChartBtn" class="btn btn-primary w-100" onclick="updateChart()">
-                            Update Chart
+                            Atualizar Gráfico
                         </button>
                     </div>
                 </div>
@@ -59,7 +59,7 @@
                 {% if available_sensors %}
                 <div class="row mb-3">
                     <div class="col-md-12">
-                        <label class="form-label"><strong>Select Sensors (max 10)</strong></label>
+                        <label class="form-label"><strong>Selecione Sensores (máx 10)</strong></label>
                         <div class="row">
                             {% for sensor in available_sensors %}
                             <div class="col-md-3 col-sm-6">
@@ -77,12 +77,12 @@
 
                 <div class="row mb-3">
                     <div class="col-md-6">
-                        <label for="id_from_timestamp" class="form-label">From (optional)</label>
+                        <label for="id_from_timestamp" class="form-label">De (opcional)</label>
                         <input type="datetime-local" name="from_timestamp" id="id_from_timestamp" class="form-control" value="{{ from_timestamp }}">
                     </div>
                     
                     <div class="col-md-6">
-                        <label for="id_to_timestamp" class="form-label">To (optional)</label>
+                        <label for="id_to_timestamp" class="form-label">Até (opcional)</label>
                         <input type="datetime-local" name="to_timestamp" id="id_to_timestamp" class="form-control" value="{{ to_timestamp }}">
                     </div>
                 </div>
@@ -97,9 +97,9 @@
     <div class="col-md-12">
         <div class="ops-card">
             <div class="d-flex justify-content-between align-items-center mb-3">
-                <h3>Chart Visualization</h3>
+                <h3>Visualização do Gráfico</h3>
                 <div>
-                    <span id="loadingIndicator" class="badge bg-warning" style="display:none;">Loading...</span>
+                    <span id="loadingIndicator" class="badge bg-warning" style="display:none;">Carregando...</span>
                     <span id="dataCount" class="badge bg-info"></span>
                 </div>
             </div>
@@ -142,17 +142,17 @@ function updateChart() {
     const toTs = document.getElementById('id_to_timestamp')?.value || '';
     
     if (!tenantSlug) {
-        alert('Please select a tenant first');
+        alert('Por favor, selecione um tenant primeiro');
         return;
     }
     
     if (sensorIds.length === 0) {
-        alert('Please select at least one sensor');
+        alert('Por favor, selecione pelo menos um sensor');
         return;
     }
     
     if (sensorIds.length > 10) {
-        alert('Maximum 10 sensors allowed');
+        alert('Máximo de 10 sensores permitidos');
         return;
     }
     
@@ -174,7 +174,7 @@ function updateChart() {
         .then(response => response.json())
         .then(data => {
             if (data.error) {
-                alert('Error: ' + data.error);
+                alert('Erro: ' + data.error);
                 return;
             }
             
@@ -182,8 +182,8 @@ function updateChart() {
             document.getElementById('loadingIndicator').style.display = 'none';
         })
         .catch(error => {
-            console.error('Error fetching chart data:', error);
-            alert('Failed to load chart data');
+            console.error('Erro ao buscar dados do gráfico:', error);
+            alert('Falha ao carregar dados do gráfico');
             document.getElementById('loadingIndicator').style.display = 'none';
         });
 }
@@ -211,7 +211,7 @@ function renderChart(data) {
     
     // Calculate total points
     const totalPoints = datasets.reduce((sum, ds) => sum + ds.data.length, 0);
-    document.getElementById('dataCount').textContent = `${totalPoints} data points`;
+    document.getElementById('dataCount').textContent = `${totalPoints} pontos de dados`;
     
     // Create chart
     myChart = new Chart(ctx, {
@@ -229,7 +229,7 @@ function renderChart(data) {
             plugins: {
                 title: {
                     display: true,
-                    text: `${data.tenant.name} - Bucket: ${data.bucket}`,
+                    text: `${data.tenant.name} - Agregação: ${data.bucket}`,
                     font: {
                         size: 16
                     }
@@ -242,7 +242,7 @@ function renderChart(data) {
                             if (label) label += ': ';
                             label += point.y?.toFixed(2) || 'N/A';
                             if (point.min !== undefined && point.max !== undefined) {
-                                label += ` (min: ${point.min.toFixed(2)}, max: ${point.max.toFixed(2)})`;
+                                label += ` (mín: ${point.min.toFixed(2)}, máx: ${point.max.toFixed(2)})`;
                             }
                             return label;
                         }
@@ -259,18 +259,18 @@ function renderChart(data) {
                     time: {
                         displayFormats: {
                             minute: 'HH:mm',
-                            hour: 'MMM dd HH:mm'
+                            hour: 'dd/MM HH:mm'
                         }
                     },
                     title: {
                         display: true,
-                        text: 'Time'
+                        text: 'Tempo'
                     }
                 },
                 y: {
                     title: {
                         display: true,
-                        text: 'Value'
+                        text: 'Valor'
                     },
                     beginAtZero: false
                 }
@@ -293,7 +293,7 @@ document.querySelectorAll('.sensor-checkbox').forEach(checkbox => {
         const checked = document.querySelectorAll('.sensor-checkbox:checked').length;
         if (checked > 10) {
             this.checked = false;
-            alert('Maximum 10 sensors allowed');
+            alert('Máximo de 10 sensores permitidos');
         }
     });
 });

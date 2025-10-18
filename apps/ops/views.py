@@ -13,6 +13,7 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.shortcuts import render, get_object_or_404
 from django.http import HttpResponseBadRequest, HttpResponse, JsonResponse
 from django.db import connection
+from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 from django_tenants.utils import schema_context, get_tenant_model
 import csv
@@ -575,3 +576,179 @@ def chart_data_api(request):
         'to_timestamp': to_ts,
         'datasets': datasets,
     })
+
+
+# =============================================================================
+# EXPORT VIEWS (Async with Celery)
+# =============================================================================
+
+@staff_member_required
+@require_http_methods(["GET"])
+def export_list(request):
+    """
+    List all export jobs for current user.
+    Shows status, download links, and allows creating new exports.
+    """
+    from .models import ExportJob
+    
+    # Get jobs for current user (or all if superuser)
+    if request.user.is_superuser:
+        jobs = ExportJob.objects.all()
+    else:
+        jobs = ExportJob.objects.filter(user=request.user)
+    
+    jobs = jobs.select_related('user').order_by('-created_at')[:50]
+    
+    # Get tenants for new export form
+    Tenant = get_tenant_model()
+    tenants = Tenant.objects.only("name", "slug").order_by("name")
+    
+    return render(request, "ops/export_list.html", {
+        "jobs": jobs,
+        "tenants": tenants,
+    })
+
+
+@staff_member_required
+@require_http_methods(["POST"])
+def export_request(request):
+    """
+    Create a new async export job.
+    Queues a Celery task and redirects to export list.
+    """
+    from .models import ExportJob
+    from .tasks import export_telemetry_async
+    from django.utils import timezone
+    from django.shortcuts import redirect
+    from django.contrib import messages
+    
+    # Get parameters
+    tenant_slug = request.POST.get('tenant_slug', '').strip()
+    sensor_id = request.POST.get('sensor_id', '').strip()
+    from_timestamp = request.POST.get('from_timestamp', '').strip()
+    to_timestamp = request.POST.get('to_timestamp', '').strip()
+    
+    if not tenant_slug:
+        messages.error(request, 'Tenant é obrigatório')
+        return redirect('ops:export_list')
+    
+    # Validate tenant
+    Tenant = get_tenant_model()
+    try:
+        tenant = Tenant.objects.get(slug=tenant_slug)
+    except Tenant.DoesNotExist:
+        messages.error(request, f'Tenant "{tenant_slug}" não encontrado')
+        return redirect('ops:export_list')
+    
+    # Parse timestamps
+    from_ts = None
+    to_ts = None
+    
+    if from_timestamp:
+        try:
+            from_ts = timezone.datetime.fromisoformat(from_timestamp.replace('Z', '+00:00'))
+            if timezone.is_naive(from_ts):
+                from_ts = timezone.make_aware(from_ts)
+        except (ValueError, TypeError):
+            messages.error(request, 'Data inicial inválida')
+            return redirect('ops:export_list')
+    
+    if to_timestamp:
+        try:
+            to_ts = timezone.datetime.fromisoformat(to_timestamp.replace('Z', '+00:00'))
+            if timezone.is_naive(to_ts):
+                to_ts = timezone.make_aware(to_ts)
+        except (ValueError, TypeError):
+            messages.error(request, 'Data final inválida')
+            return redirect('ops:export_list')
+    
+    # Create job
+    job = ExportJob.objects.create(
+        user=request.user,
+        tenant_slug=tenant.slug,
+        tenant_name=tenant.name,
+        sensor_id=sensor_id,
+        from_timestamp=from_ts,
+        to_timestamp=to_ts,
+    )
+    
+    # Queue Celery task
+    task = export_telemetry_async.delay(job.pk)
+    job.celery_task_id = task.id
+    job.save(update_fields=['celery_task_id'])
+    
+    messages.success(
+        request,
+        f'Export #{job.pk} criado! Você receberá um email quando estiver pronto.'
+    )
+    
+    return redirect('ops:export_list')
+
+
+@staff_member_required
+@require_http_methods(["GET"])
+def export_download(request, job_id):
+    """
+    Redirect to MinIO presigned URL for download.
+    Or serve file directly if using local storage.
+    """
+    from .models import ExportJob
+    from django.shortcuts import redirect
+    from django.contrib import messages
+    
+    job = get_object_or_404(ExportJob, pk=job_id)
+    
+    # Check permission (user or superuser)
+    if not request.user.is_superuser and job.user != request.user:
+        messages.error(request, 'Você não tem permissão para acessar este export')
+        return redirect('ops:export_list')
+    
+    # Check status
+    if job.status != ExportJob.STATUS_COMPLETED:
+        messages.error(request, f'Export ainda não está pronto (status: {job.get_status_display()})')
+        return redirect('ops:export_list')
+    
+    # Check expiration
+    if job.is_expired or not job.file_url:
+        messages.error(request, 'Este export expirou e não está mais disponível')
+        return redirect('ops:export_list')
+    
+    # Redirect to presigned URL
+    return redirect(job.file_url)
+
+
+@staff_member_required
+@require_http_methods(["POST"])
+def export_cancel(request, job_id):
+    """
+    Cancel a pending export job.
+    """
+    from .models import ExportJob
+    from django.shortcuts import redirect
+    from django.contrib import messages
+    from celery.result import AsyncResult
+    
+    job = get_object_or_404(ExportJob, pk=job_id)
+    
+    # Check permission
+    if not request.user.is_superuser and job.user != request.user:
+        messages.error(request, 'Você não tem permissão para cancelar este export')
+        return redirect('ops:export_list')
+    
+    # Can only cancel pending jobs
+    if job.status not in [ExportJob.STATUS_PENDING, ExportJob.STATUS_PROCESSING]:
+        messages.error(request, f'Não é possível cancelar export com status: {job.get_status_display()}')
+        return redirect('ops:export_list')
+    
+    # Revoke Celery task
+    if job.celery_task_id:
+        AsyncResult(job.celery_task_id).revoke(terminate=True)
+    
+    # Update job
+    job.status = ExportJob.STATUS_FAILED
+    job.error_message = 'Cancelado pelo usuário'
+    job.completed_at = timezone.now()
+    job.save(update_fields=['status', 'error_message', 'completed_at'])
+    
+    messages.success(request, f'Export #{job.pk} cancelado com sucesso')
+    return redirect('ops:export_list')
