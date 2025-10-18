@@ -14,6 +14,9 @@ urlpatterns = [
     # Centralized Django Admin (only in public schema)
     path('admin/', admin.site.urls),
     
+    # Ops Panel (staff-only, public schema)
+    path('ops/', include('apps.ops.urls')),
+    
     # Health check
     path('health', health_check, name='health'),
     

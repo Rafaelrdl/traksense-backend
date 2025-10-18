@@ -337,6 +337,172 @@ EMQX_API_KEY=prod-provisioner
 EMQX_API_SECRET=SUA_API_KEY_FORTE
 ```
 
+## 🔧 Painel Ops (Staff-Only)
+
+O TrakSense inclui um **painel interno de operações** acessível apenas para usuários staff. Este painel permite consultar e monitorar telemetria de **todos os tenants** a partir de uma interface centralizada.
+
+### Acesso
+
+- **URL**: http://localhost:8000/ops/
+- **Permissão**: Requer `is_staff=True` (staff member)
+- **Schema**: Executa exclusivamente no schema `public`
+
+### Funcionalidades
+
+#### 1. Home - Seletor de Tenant e Filtros
+
+Na página inicial (`/ops/`), você encontra:
+
+- **Seletor de Tenant**: Lista todos os tenants cadastrados
+- **Filtros de Telemetria**:
+  - `device_id`: Filtrar por ID do dispositivo (opcional)
+  - `sensor_id`: Filtrar por ID do sensor (opcional)
+  - `from`: Timestamp ISO-8601 de início (opcional)
+  - `to`: Timestamp ISO-8601 de fim (opcional)
+  - `bucket`: Agregação temporal (1m, 5m, 1h)
+  - `limit`: Resultados por página (padrão: 200, máx: 1000)
+
+#### 2. Telemetry List - Resultados Agregados
+
+Após submeter o formulário, você é redirecionado para `/ops/telemetry` com:
+
+- **Tabela paginada** mostrando buckets agregados de tempo
+- **Métricas por bucket**: avg, min, max, last, count
+- **Paginação**: Navegação por offset/limit
+- **Export CSV**: Botão para exportar resultados (POST com CSRF)
+- **Drill-down**: Botão por linha para inspecionar sensor específico
+
+**Exemplo de URL:**
+```
+http://localhost:8000/ops/telemetry?tenant_slug=uberlandia_medical_center&sensor_id=temp_01&bucket=1m&limit=200
+```
+
+#### 3. Drill-down - Leituras Raw
+
+Ao clicar em "Drill-down" em uma linha, você acessa `/ops/telemetry/drilldown`:
+
+- **Últimas N leituras** do sensor selecionado (padrão: 500, máx: 1000)
+- **Estatísticas gerais**: Total de leituras, avg, min/max, range temporal
+- **Tabela detalhada**: Timestamp preciso, device_id, sensor_id, value, labels (JSON)
+- **Isolamento por schema**: Usa `schema_context(tenant)` para consultar o schema correto
+
+**Exemplo de URL:**
+```
+http://localhost:8000/ops/telemetry/drilldown?tenant_slug=uberlandia_medical_center&sensor_id=temp_01&device_id=device_001
+```
+
+### Segurança e Isolamento
+
+#### Proteção por Staff
+
+Todas as views do painel Ops usam o decorator `@staff_member_required`:
+
+```python
+from django.contrib.admin.views.decorators import staff_member_required
+
+@staff_member_required  # Equivalente ao check do admin
+def index(request):
+    # ...
+```
+
+Se um usuário **não-staff** tentar acessar `/ops/`, será redirecionado para a página de login.
+
+#### Middleware de Bloqueio
+
+O middleware `BlockTenantOpsMiddleware` garante que `/ops/` **não seja acessível** via domínios de tenant:
+
+```python
+# apps/common/middleware.py
+class BlockTenantOpsMiddleware:
+    def __call__(self, request):
+        if request.path.startswith("/ops/"):
+            schema_name = getattr(connection, "schema_name", None)
+            if schema_name and schema_name != "public":
+                return HttpResponseNotFound()  # 404 se não for public
+        return self.get_response(request)
+```
+
+**Resultado:**
+- ✅ `http://localhost:8000/ops/` → Funciona (public schema)
+- ❌ `http://umc.localhost:8000/ops/` → 404 (tenant schema)
+
+#### Consultas com `schema_context`
+
+O painel usa `schema_context` para executar queries SQL **no schema do tenant selecionado**, mantendo isolamento correto:
+
+```python
+from django_tenants.utils import schema_context, get_tenant_model
+
+tenant = Tenant.objects.get(slug=tenant_slug)
+
+with schema_context(tenant.schema_name):
+    # Queries aqui executam no schema do tenant
+    cursor.execute("SELECT * FROM reading WHERE sensor_id = %s", [sensor_id])
+    rows = cursor.fetchall()
+```
+
+**Referências:**
+- `schema_context`: https://django-tenants.readthedocs.io/en/latest/use.html
+- `@staff_member_required`: https://docs.djangoproject.com/en/5.2/topics/auth/default/
+
+#### CSRF Protection
+
+Todos os formulários incluem `{% csrf_token %}` e o middleware `CsrfViewMiddleware` está ativo:
+
+```django
+<form method="post" action="{% url 'ops:telemetry_export_csv' %}">
+    {% csrf_token %}
+    <!-- campos do formulário -->
+</form>
+```
+
+### Fluxo de Uso
+
+1. **Login**: Acesse `http://localhost:8000/admin/` e faça login com usuário staff
+2. **Painel Ops**: Navegue para `http://localhost:8000/ops/`
+3. **Selecione Tenant**: Escolha tenant no dropdown (ex: "Uberlândia Medical Center")
+4. **Defina Filtros**: Opcional - device_id, sensor_id, time range, bucket
+5. **Query**: Clique em "Query Telemetry"
+6. **Visualize**: Veja resultados agregados em tabela paginada
+7. **Drill-down**: Clique em botão "Drill-down" para inspecionar sensor específico
+8. **Export**: Clique em "Export CSV" para baixar dados (POST com CSRF)
+
+### Exemplo de Criação de Usuário Staff
+
+Para criar um usuário staff com acesso ao painel:
+
+```bash
+# Via shell Django
+docker exec -it traksense-api python manage.py shell
+
+# No shell Python
+from apps.accounts.models import User
+user = User.objects.create_user(
+    email='ops@traksense.com',
+    password='StrongOpsPassword123!',
+    first_name='Ops',
+    last_name='Team',
+    is_staff=True,  # Requerido para acesso ao painel
+    is_superuser=False  # Opcional
+)
+user.save()
+```
+
+### Limitações e Considerações
+
+- **Performance**: Queries agregadas em tempo real (sem Continuous Aggregates materializadas no Apache OSS). Para datasets muito grandes (>10M rows), considere criar materialized views manualmente.
+- **Paginação**: Count total aproximado para evitar overhead. Para milhões de buckets, a paginação pode ser lenta.
+- **Export CSV**: Limitado a 10.000 registros por export para evitar timeouts.
+- **Drill-down**: Mostra últimas 1.000 leituras por padrão. Para análises mais profundas, use ferramentas de BI ou Jupyter notebooks.
+
+### Próximos Passos (Melhorias Futuras)
+
+- [ ] **Grupos de Permissão**: Criar grupo `traksense_ops` além de `is_staff`
+- [ ] **Visualizações**: Integrar Chart.js para gráficos de linha em drill-down
+- [ ] **Alertas**: Monitorar e destacar sensores com valores anômalos
+- [ ] **Logs de Auditoria**: Registrar acessos ao painel (quem, quando, qual tenant)
+- [ ] **API Interna**: Endpoint JSON para consumo programático (ex: scripts de monitoramento)
+
 ### Segurança EMQX (Produção)
 
 Para ambiente de produção, ajuste no `docker-compose.yml`:

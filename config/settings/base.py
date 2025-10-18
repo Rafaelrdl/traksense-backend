@@ -43,6 +43,7 @@ SHARED_APPS = [
     
     # Local shared apps
     'apps.tenants',
+    'apps.ops',  # Ops panel (staff-only, public schema)
 ]
 
 TENANT_APPS = [
@@ -66,6 +67,7 @@ INSTALLED_APPS = list(SHARED_APPS) + [
 MIDDLEWARE = [
     'django_tenants.middleware.main.TenantMainMiddleware',  # Must be first
     'apps.common.middleware.BlockTenantAdminMiddleware',  # Block admin in tenant schemas
+    'apps.common.middleware.BlockTenantOpsMiddleware',  # Block ops panel in tenant schemas
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',  # Serve static files in production
     'django.contrib.sessions.middleware.SessionMiddleware',
