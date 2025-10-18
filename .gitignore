@@ -63,3 +63,15 @@ celerybeat.pid
 
 # Docker
 *.pid
+
+# EMQX (proteger API keys de produção)
+docker/emqx/prod_api_key.conf
+docker/emqx/*_api_key.conf
+!docker/emqx/default_api_key.conf
+
+# Secrets
+.secrets/
+*.pem
+*.key
+*.crt
+*.csr

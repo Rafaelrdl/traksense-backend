@@ -55,7 +55,24 @@ make migrate
 make seed
 ```
 
-### 4. Acesse a Aplicação
+### 4. Provisionar EMQX (Rule Engine)
+
+```bash
+# Windows (PowerShell) - dê permissão de execução primeiro se necessário
+bash docker/scripts/provision-emqx.sh
+
+# Linux/Mac
+chmod +x docker/scripts/provision-emqx.sh
+./docker/scripts/provision-emqx.sh
+```
+
+Este script configura automaticamente:
+- **Connector HTTP** para o backend Django
+- **Action HTTP** que encaminha mensagens MQTT para `POST /ingest`
+- **Rule SQL** que captura publicações em `tenants/{slug}/#`
+- **Authorization rules** (dev) permitindo apenas tópicos do tenant
+
+### 5. Acesse a Aplicação
 
 - **API**: http://localhost
 - **Swagger Docs**: http://localhost/api/docs/
@@ -73,6 +90,8 @@ make seed
 - **Mailpit UI**: http://localhost:8025
 - **PostgreSQL**: localhost:5432 (app / app / app)
 - **Redis**: localhost:6379
+
+> **💡 Dica EMQX**: Após provisionar, acesse o Dashboard em http://localhost:18083 para visualizar o Connector, Action e Rule criados. Use `admin/public` para login (dev).
 
 ## 📋 Comandos Make
 
@@ -236,6 +255,103 @@ curl -H "Host: umc.localhost" http://localhost/health
 # Conectar ao banco e criar extensão manualmente
 docker compose -f docker/docker-compose.yml exec postgres psql -U app -d app -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
 ```
+
+### Erro: EMQX provisioning falhou
+
+```bash
+# Verifique se o EMQX está rodando
+docker compose -f docker/docker-compose.yml ps emqx
+
+# Verifique os logs do EMQX
+docker compose -f docker/docker-compose.yml logs emqx
+
+# Aguarde alguns segundos para o EMQX iniciar completamente
+sleep 10
+
+# Execute o provisionamento novamente
+bash docker/scripts/provision-emqx.sh
+```
+
+## 📡 EMQX & MQTT
+
+O TrakSense usa EMQX como broker MQTT para ingestão de telemetria IoT.
+
+### Fluxo de Dados
+
+```
+Dispositivo IoT → Publica MQTT → EMQX (broker)
+                                    ↓
+                              Rule Engine (SQL)
+                                    ↓
+                              HTTP Action (POST)
+                                    ↓
+                              Django API (/ingest)
+```
+
+### Tópicos MQTT
+
+O padrão de tópicos segue a estrutura multi-tenant:
+
+```
+tenants/{tenant_slug}/devices/{device_id}/sensors/{sensor_type}
+```
+
+**Exemplos:**
+- `tenants/umc/devices/hvac-001/sensors/temperature`
+- `tenants/umc/devices/hvac-001/sensors/humidity`
+- `tenants/acme/devices/chiller-42/sensors/pressure`
+
+### Publicando Mensagens (Teste)
+
+Você pode testar a ingestão usando qualquer cliente MQTT:
+
+```bash
+# Usando mosquitto_pub (instalar: apt install mosquitto-clients)
+mosquitto_pub -h localhost -p 1883 \
+  -t "tenants/umc/devices/test-001/sensors/temperature" \
+  -m '{"value": 23.5, "unit": "celsius", "timestamp": "2025-10-17T10:30:00Z"}'
+```
+
+### Verificando Regras no Dashboard
+
+1. Acesse http://localhost:18083 (admin / public)
+2. Navegue até **Integration → Rules**
+3. Você verá a regra `r_umc_ingest` com:
+   - **SQL**: `SELECT clientid as client_id, topic, payload, timestamp as ts FROM "tenants/umc/#"`
+   - **Action**: HTTP POST para `http://api:8000/ingest`
+   - **Status**: Enabled ✅
+
+### API Keys (Produção)
+
+Em produção, configure API Keys seguras:
+
+```bash
+# Gere uma API key forte
+openssl rand -base64 32
+
+# Atualize docker/emqx/default_api_key.conf (não versionar)
+prod-provisioner:SUA_API_KEY_FORTE:administrator
+
+# Configure no .env
+EMQX_API_KEY=prod-provisioner
+EMQX_API_SECRET=SUA_API_KEY_FORTE
+```
+
+### Segurança EMQX (Produção)
+
+Para ambiente de produção, ajuste no `docker-compose.yml`:
+
+```yaml
+environment:
+  EMQX_ALLOW_ANONYMOUS: "false"        # Requer autenticação
+  EMQX_NODE__COOKIE: "<cookie-forte>"  # Cookie Erlang único
+  EMQX_LOADED_PLUGINS: "emqx_auth_http,emqx_management,emqx_dashboard"
+```
+
+E configure authentication externa (JWT/HTTP):
+- **JWT**: Tokens assinados pelo backend Django
+- **HTTP**: Callback para endpoint Django de autenticação
+- **Database**: PostgreSQL com credenciais por dispositivo
 
 ## 🔄 Próximas Fases
 

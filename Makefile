@@ -1,19 +1,20 @@
 # Makefile for TrakSense Backend
 
-.PHONY: help dev stop migrate seed check fmt lint test ci clean
+.PHONY: help dev stop migrate seed provision-emqx check fmt lint test ci clean
 
 help:
 	@echo "TrakSense Backend - Available commands:"
-	@echo "  make dev        - Start all services with Docker Compose"
-	@echo "  make stop       - Stop all services"
-	@echo "  make migrate    - Run database migrations (migrate_schemas)"
-	@echo "  make seed       - Seed development data (tenant + owner)"
-	@echo "  make check      - Run health checks and validations"
-	@echo "  make fmt        - Format code with black and isort"
-	@echo "  make lint       - Run linters (ruff)"
-	@echo "  make test       - Run test suite (placeholder)"
-	@echo "  make ci         - Run CI checks (lint + test)"
-	@echo "  make clean      - Clean Docker volumes and cache"
+	@echo "  make dev            - Start all services with Docker Compose"
+	@echo "  make stop           - Stop all services"
+	@echo "  make migrate        - Run database migrations (migrate_schemas)"
+	@echo "  make seed           - Seed development data (tenant + owner)"
+	@echo "  make provision-emqx - Provision EMQX (connector, action, rule)"
+	@echo "  make check          - Run health checks and validations"
+	@echo "  make fmt            - Format code with black and isort"
+	@echo "  make lint           - Run linters (ruff)"
+	@echo "  make test           - Run test suite (placeholder)"
+	@echo "  make ci             - Run CI checks (lint + test)"
+	@echo "  make clean          - Clean Docker volumes and cache"
 
 dev:
 	docker compose -f docker/docker-compose.yml up -d
@@ -26,6 +27,10 @@ migrate:
 
 seed:
 	docker compose -f docker/docker-compose.yml exec api python manage.py seed_dev
+
+provision-emqx:
+	@echo "Provisioning EMQX (Rule Engine)..."
+	bash docker/scripts/provision-emqx.sh
 
 check:
 	@echo "Running health checks..."

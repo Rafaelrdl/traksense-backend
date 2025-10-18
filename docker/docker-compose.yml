@@ -72,9 +72,13 @@ services:
     volumes:
       - emqx_data:/opt/emqx/data
       - emqx_log:/opt/emqx/log
+      - ./emqx/default_api_key.conf:/opt/emqx/etc/default_api_key.conf:ro
     environment:
       EMQX_NAME: traksense
       EMQX_HOST: 127.0.0.1
+      EMQX_NODE__COOKIE: algum-cookie-bem-aleatorio-dev
+      EMQX_ALLOW_ANONYMOUS: "false"
+      EMQX_API_KEY__BOOTSTRAP__FILE: /opt/emqx/etc/default_api_key.conf
     healthcheck:
       test: ["CMD", "emqx", "ping"]
       interval: 5s
@@ -108,7 +112,7 @@ services:
       context: ..
       dockerfile: docker/api/Dockerfile
     container_name: traksense-api
-    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --reload
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 1 --worker-class gthread --threads 2 --timeout 120 --log-level debug
     environment:
       DJANGO_SECRET_KEY: dev-secret-key-change-in-production-minimum-50-characters-long
       DJANGO_SETTINGS_MODULE: config.settings.development

@@ -52,6 +52,9 @@ TENANT_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.admin',
+    
+    # Tenant-specific apps
+    'apps.ingest',  # MQTT telemetry ingestion
 ]
 
 INSTALLED_APPS = list(SHARED_APPS) + [
@@ -109,6 +112,9 @@ DATABASE_ROUTERS = ['django_tenants.routers.TenantSyncRouter']
 TENANT_MODEL = "tenants.Tenant"
 TENANT_DOMAIN_MODEL = "tenants.Domain"
 PUBLIC_SCHEMA_NAME = os.getenv('PUBLIC_SCHEMA_NAME', 'public')
+
+# Public schema URLs (bypass tenant middleware)
+PUBLIC_SCHEMA_URLCONF = 'config.urls_public'
 
 # Password validation
 # https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators
