@@ -34,7 +34,7 @@ SHARED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'jazzmin',  # Must be before django.contrib.admin
-    'django.contrib.admin',
+    'django.contrib.admin',  # Admin only in public schema
     
     # Third-party
     'rest_framework',
@@ -52,8 +52,8 @@ TENANT_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'jazzmin',  # Must be before django.contrib.admin
-    'django.contrib.admin',
+    # NOTE: django.contrib.admin is NOT in TENANT_APPS
+    # Admin is centralized in public schema only
     
     # Tenant-specific apps
     'apps.ingest',  # MQTT telemetry ingestion
@@ -65,7 +65,9 @@ INSTALLED_APPS = list(SHARED_APPS) + [
 
 MIDDLEWARE = [
     'django_tenants.middleware.main.TenantMainMiddleware',  # Must be first
+    'apps.common.middleware.BlockTenantAdminMiddleware',  # Block admin in tenant schemas
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',  # Serve static files in production
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -115,8 +117,9 @@ TENANT_MODEL = "tenants.Tenant"
 TENANT_DOMAIN_MODEL = "tenants.Domain"
 PUBLIC_SCHEMA_NAME = os.getenv('PUBLIC_SCHEMA_NAME', 'public')
 
-# Public schema URLs (bypass tenant middleware)
-PUBLIC_SCHEMA_URLCONF = 'config.urls_public'
+# URLConf settings for multi-tenant
+PUBLIC_SCHEMA_URLCONF = 'config.urls_public'  # Used when schema == 'public'
+ROOT_URLCONF = 'config.urls'  # Default URLConf for tenants
 
 # Password validation
 # https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators
@@ -146,6 +149,16 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.0/howto/static-files/
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# WhiteNoise configuration for serving static files
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field

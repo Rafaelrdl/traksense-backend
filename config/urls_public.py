@@ -1,15 +1,19 @@
 """
-URL configuration for public/non-tenant routes.
+URL configuration for public/non-tenant routes (schema: public).
 
-These URLs bypass the tenant middleware and are accessible without a tenant domain.
-Used for EMQX ingestion, health checks, and other infrastructure endpoints.
+These URLs are used when accessing the public schema.
+Includes centralized Django Admin with Jazzmin.
 """
 
+from django.contrib import admin
 from django.urls import include, path
 
 from apps.common.health import health_check
 
 urlpatterns = [
+    # Centralized Django Admin (only in public schema)
+    path('admin/', admin.site.urls),
+    
     # Health check
     path('health', health_check, name='health'),
     

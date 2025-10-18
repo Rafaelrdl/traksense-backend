@@ -1,11 +1,12 @@
 """
-URL configuration for TrakSense backend.
+URL configuration for TrakSense backend (Tenant schemas).
 
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/5.0/topics/http/urls/
+This URLConf is used for tenant schemas (NOT public schema).
+Admin is NOT exposed here - it's centralized in public schema only.
+
+For public schema URLs, see config.urls_public.
 """
 
-from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import (
     SpectacularAPIView,
@@ -13,11 +14,9 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
-from apps.common.health import health_check
-
 urlpatterns = [
-    # Admin
-    path('admin/', admin.site.urls),
+    # NOTE: Admin is NOT included here - it's only in public schema
+    # Admin URL: http://localhost:8000/admin (public schema)
     
     # API Documentation
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
