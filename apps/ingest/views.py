@@ -44,13 +44,6 @@ class IngestView(APIView):
         """
         Process incoming telemetry data from EMQX.
         """
-        # Debug logging
-        logger.info(f"🔵 IngestView POST recebido")
-        logger.info(f"  Headers: {dict(request.headers)}")
-        logger.info(f"  Content-Type: {request.content_type}")
-        logger.info(f"  Body (raw): {request.body[:500]}")  # First 500 chars
-        logger.info(f"  Data (parsed): {request.data}")
-        
         # Extract tenant from header
         tenant_slug = request.headers.get('x-tenant')
         if not tenant_slug:

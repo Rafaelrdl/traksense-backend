@@ -2,12 +2,7 @@
 Development settings for TrakSense backend.
 """
 
-import sys
-print("🔵 [SETTINGS] Carregando development.py", file=sys.stderr, flush=True)
-
 from .base import *
-
-print("🔵 [SETTINGS] base.py importado", file=sys.stderr, flush=True)
 
 DEBUG = True
 

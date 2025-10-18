@@ -33,6 +33,7 @@ SHARED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'jazzmin',  # Must be before django.contrib.admin
     'django.contrib.admin',
     
     # Third-party
@@ -51,6 +52,7 @@ TENANT_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'jazzmin',  # Must be before django.contrib.admin
     'django.contrib.admin',
     
     # Tenant-specific apps
@@ -214,4 +216,121 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = os.getenv('MAILPIT_SMTP_HOST', 'mailpit')
 EMAIL_PORT = int(os.getenv('MAILPIT_SMTP_PORT', '1025'))
 EMAIL_USE_TLS = False
+
+# ============================================================================
+# DJANGO JAZZMIN - Modern Admin Interface
+# ============================================================================
+JAZZMIN_SETTINGS = {
+    # Title
+    "site_title": "TrakSense Admin",
+    "site_header": "TrakSense",
+    "site_brand": "TrakSense Platform",
+    "site_logo": None,
+    "login_logo": None,
+    "site_icon": None,
+    
+    # Welcome text
+    "welcome_sign": "Bem-vindo ao TrakSense Admin",
+    "copyright": "TrakSense © 2025",
+    
+    # Search model
+    "search_model": ["auth.User", "tenants.Tenant", "tenants.Domain"],
+    
+    # Top menu
+    "topmenu_links": [
+        {"name": "Home", "url": "admin:index", "permissions": ["auth.view_user"]},
+        {"name": "API Docs", "url": "/api/schema/swagger-ui/", "new_window": True},
+        {"model": "tenants.Tenant"},
+    ],
+    
+    # User menu
+    "usermenu_links": [
+        {"model": "auth.user"}
+    ],
+    
+    # Side menu
+    "show_sidebar": True,
+    "navigation_expanded": True,
+    "hide_apps": [],
+    "hide_models": [],
+    
+    # Icons (FontAwesome)
+    "icons": {
+        "auth": "fas fa-users-cog",
+        "auth.user": "fas fa-user",
+        "auth.Group": "fas fa-users",
+        "tenants.Tenant": "fas fa-building",
+        "tenants.Domain": "fas fa-globe",
+        "ingest.Telemetry": "fas fa-database",
+    },
+    
+    # Theme
+    "default_icon_parents": "fas fa-chevron-circle-right",
+    "default_icon_children": "fas fa-circle",
+    
+    # UI Tweaks
+    "show_ui_builder": False,
+    "changeform_format": "horizontal_tabs",
+    "changeform_format_overrides": {
+        "auth.user": "collapsible",
+        "auth.group": "vertical_tabs"
+    },
+    
+    # Custom CSS/JS
+    "custom_css": None,
+    "custom_js": None,
+    "use_google_fonts_cdn": True,
+    "show_ui_builder": False,
+    
+    # Related modal
+    "related_modal_active": True,
+    
+    # Custom links (per app)
+    "custom_links": {
+        "tenants": [
+            {
+                "name": "Ver Documentação Multi-Tenant",
+                "url": "/docs/multi-tenant",
+                "icon": "fas fa-book",
+                "permissions": ["tenants.view_tenant"]
+            }
+        ],
+    },
+    
+    # Language chooser
+    "language_chooser": False,
+}
+
+JAZZMIN_UI_TWEAKS = {
+    "navbar_small_text": False,
+    "footer_small_text": False,
+    "body_small_text": False,
+    "brand_small_text": False,
+    "brand_colour": "navbar-primary",
+    "accent": "accent-primary",
+    "navbar": "navbar-dark",
+    "no_navbar_border": False,
+    "navbar_fixed": True,
+    "layout_boxed": False,
+    "footer_fixed": False,
+    "sidebar_fixed": True,
+    "sidebar": "sidebar-dark-primary",
+    "sidebar_nav_small_text": False,
+    "sidebar_disable_expand": False,
+    "sidebar_nav_legacy_style": False,
+    "sidebar_nav_compact_style": False,
+    "sidebar_nav_child_indent": False,
+    "sidebar_nav_flat_style": False,
+    "theme": "default",
+    "dark_mode_theme": None,
+    "button_classes": {
+        "primary": "btn-primary",
+        "secondary": "btn-secondary",
+        "info": "btn-info",
+        "warning": "btn-warning",
+        "danger": "btn-danger",
+        "success": "btn-success"
+    }
+}
+
 EMAIL_USE_SSL = False
