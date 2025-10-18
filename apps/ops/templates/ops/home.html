@@ -1,6 +1,6 @@
 {% extends "ops/base_ops.html" %}
 
-{% block title %}Home - Ops Panel{% endblock %}
+{% block title %}Home - Control Center{% endblock %}
 
 {% block breadcrumb %}
 <li class="breadcrumb-item active" aria-current="page">Home</li>
@@ -18,7 +18,7 @@
             </h2>
             
             <div class="alert alert-info">
-                <strong>Staff-only panel:</strong> Query telemetry data across all tenants with advanced filtering and drill-down capabilities.
+                <strong>Staff-only Control Center:</strong> Query telemetry data across all tenants with advanced filtering and drill-down capabilities.
             </div>
 
             <form method="get" action="{% url 'ops:telemetry_list' %}" class="filter-form">

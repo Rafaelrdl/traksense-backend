@@ -337,13 +337,14 @@ EMQX_API_KEY=prod-provisioner
 EMQX_API_SECRET=SUA_API_KEY_FORTE
 ```
 
-## 🔧 Painel Ops (Staff-Only)
+## 🎛️ Control Center (Staff-Only)
 
-O TrakSense inclui um **painel interno de operações** acessível apenas para usuários staff. Este painel permite consultar e monitorar telemetria de **todos os tenants** a partir de uma interface centralizada.
+O TrakSense inclui um **Control Center interno** acessível apenas para usuários staff. Este painel permite consultar e monitorar telemetria de **todos os tenants** a partir de uma interface centralizada.
 
 ### Acesso
 
 - **URL**: http://localhost:8000/ops/
+- **Atalho**: Botão "🎛️ Control Center" na barra lateral do Django Admin
 - **Permissão**: Requer `is_staff=True` (staff member)
 - **Schema**: Executa exclusivamente no schema `public`
 
@@ -395,7 +396,7 @@ http://localhost:8000/ops/telemetry/drilldown?tenant_slug=uberlandia_medical_cen
 
 #### Proteção por Staff
 
-Todas as views do painel Ops usam o decorator `@staff_member_required`:
+Todas as views do Control Center usam o decorator `@staff_member_required`:
 
 ```python
 from django.contrib.admin.views.decorators import staff_member_required
@@ -459,7 +460,7 @@ Todos os formulários incluem `{% csrf_token %}` e o middleware `CsrfViewMiddlew
 ### Fluxo de Uso
 
 1. **Login**: Acesse `http://localhost:8000/admin/` e faça login com usuário staff
-2. **Painel Ops**: Navegue para `http://localhost:8000/ops/`
+2. **Control Center**: Clique no botão "🎛️ Control Center" na barra lateral do Admin ou navegue para `http://localhost:8000/ops/`
 3. **Selecione Tenant**: Escolha tenant no dropdown (ex: "Uberlândia Medical Center")
 4. **Defina Filtros**: Opcional - device_id, sensor_id, time range, bucket
 5. **Query**: Clique em "Query Telemetry"

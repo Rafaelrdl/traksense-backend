@@ -1,5 +1,5 @@
 """
-Ops panel views - staff-only telemetry monitoring.
+Control Center views - staff-only telemetry monitoring.
 
 All views require staff authentication and run on the public schema.
 Uses schema_context to query tenant-specific data while maintaining isolation.
@@ -26,7 +26,7 @@ from .forms import TelemetryFilterForm
 @require_http_methods(["GET"])
 def index(request):
     """
-    Ops panel home - tenant selector and filter form.
+    Control Center home - tenant selector and filter form.
     
     Displays list of all tenants for selection and telemetry filter options.
     Staff-only access enforced by @staff_member_required decorator.

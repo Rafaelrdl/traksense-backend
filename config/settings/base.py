@@ -303,6 +303,14 @@ JAZZMIN_SETTINGS = {
     
     # Custom links (per app)
     "custom_links": {
+        "auth": [
+            {
+                "name": "🎛️ Control Center",
+                "url": "/ops/",
+                "icon": "fas fa-chart-line",
+                "permissions": ["auth.view_user"]
+            }
+        ],
         "tenants": [
             {
                 "name": "Ver Documentação Multi-Tenant",
