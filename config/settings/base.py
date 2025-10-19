@@ -62,7 +62,9 @@ TENANT_APPS = [
     
     # Tenant-specific apps
     'apps.ingest',  # MQTT telemetry ingestion
+    'apps.assets',  # Catálogo de Ativos (Sites, Assets, Devices, Sensors)
 ]
+
 
 INSTALLED_APPS = list(SHARED_APPS) + [
     app for app in TENANT_APPS if app not in SHARED_APPS
