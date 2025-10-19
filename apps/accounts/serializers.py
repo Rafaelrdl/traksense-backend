@@ -31,7 +31,6 @@ class UserSerializer(serializers.ModelSerializer):
             'phone',
             'bio',
             'timezone',
-            'language',
             'time_format',
             'email_verified',
             'is_active',
@@ -68,7 +67,6 @@ class UserUpdateSerializer(serializers.ModelSerializer):
             'phone',
             'bio',
             'timezone',
-            'language',
             'time_format',
         ]
 

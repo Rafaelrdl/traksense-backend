@@ -27,7 +27,6 @@ class User(AbstractUser):
     
     # Preferences
     timezone = models.CharField('Timezone', max_length=50, default='America/Sao_Paulo')
-    language = models.CharField('Language', max_length=10, default='pt-br')
     time_format = models.CharField(
         'Time Format',
         max_length=3,
