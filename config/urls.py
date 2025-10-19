@@ -26,6 +26,9 @@ urlpatterns = [
     # Authentication & Users API
     path('api/', include('apps.accounts.urls')),
     
+    # Assets Catalog API (tenant-specific data)
+    path('api/', include('apps.assets.urls')),
+    
     # Telemetry API (tenant-specific data)
     path('api/telemetry/', include('apps.ingest.api_urls')),
 ]
