@@ -181,6 +181,11 @@ class MeView(APIView):
     
     def patch(self, request):
         """Update current user profile."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"🔄 PATCH /api/users/me/ - Data recebida: {request.data}")
+        
         serializer = UserUpdateSerializer(
             request.user,
             data=request.data,
@@ -189,8 +194,17 @@ class MeView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         
+        # Refresh para pegar dados atualizados
+        request.user.refresh_from_db()
+        
+        # Serializa usuário atualizado
+        user_data = UserSerializer(request.user).data
+        
+        logger.info(f"✅ PATCH /api/users/me/ - User data serializado: {user_data}")
+        logger.info(f"🕐 PATCH /api/users/me/ - time_format no response: {user_data.get('time_format', 'MISSING')}")
+        
         return Response({
-            'user': UserSerializer(request.user).data,
+            'user': user_data,
             'message': 'Perfil atualizado com sucesso!'
         })
 
