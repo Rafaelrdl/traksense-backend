@@ -6,6 +6,7 @@ Provides convenient endpoints for:
 - Historical data for specific devices/sensors
 - Device summary with all sensors
 """
+import json
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -379,12 +380,32 @@ class DeviceSummaryView(APIView):
             if last_seen is None or reading_ts > last_seen:
                 last_seen = reading_ts
             
+            # Parse labels (pode ser string JSON ou dict)
+            labels = reading_data.get('labels', {})
+            if isinstance(labels, str):
+                try:
+                    labels = json.loads(labels)
+                except (json.JSONDecodeError, TypeError):
+                    labels = {}
+            
+            # Determinar status: online se última leitura foi dentro do threshold
+            is_online = reading_ts >= online_threshold
+            
             sensors.append({
                 'sensor_id': reading_data['sensor_id'],
+                'sensor_name': reading_data['sensor_id'],  # Por enquanto usa o ID como nome
+                'sensor_type': labels.get('type', 'unknown') if isinstance(labels, dict) else 'unknown',
+                'unit': labels.get('unit', '') if isinstance(labels, dict) else '',
+                'is_online': is_online,
                 'last_value': reading_data['value'],
                 'last_reading': reading_ts.isoformat(),
-                'unit': reading_data.get('labels', {}).get('unit', ''),
-                'status': 'ok' if reading_ts >= online_threshold else 'stale'
+                'statistics_24h': {
+                    'avg': None,  # TODO: Calcular estatísticas
+                    'min': None,
+                    'max': None,
+                    'count': 0,
+                    'stddev': None,
+                }
             })
         
         # Device status
