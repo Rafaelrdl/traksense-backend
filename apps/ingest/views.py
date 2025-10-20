@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 
 from apps.tenants.models import Tenant
 from .models import Telemetry, Reading
+from .parsers import parser_manager
 
 logger = logging.getLogger(__name__)
 
@@ -125,17 +126,40 @@ class IngestView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
         
-        # Extract device_id from payload (correct device ID, not MQTT client_id)
-        device_id = payload.get('device_id') if isinstance(payload, dict) else None
-        if not device_id:
-            logger.warning(f"Missing device_id in payload. Using client_id as fallback: {client_id}")
-            device_id = client_id
+        # 🎯 USAR O SISTEMA DE PARSERS
+        # Encontrar o parser adequado para o formato do payload
+        parser = parser_manager.get_parser(data, topic)
+        
+        if not parser:
+            logger.warning(f"⚠️ Nenhum parser encontrado para o payload. Topic: {topic}")
+            return Response(
+                {"error": "Formato de payload não reconhecido"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Parsear o payload usando o parser selecionado
+        try:
+            parsed_data = parser.parse(data, topic)
+            logger.info(f"✅ Payload parseado com sucesso usando {parser.__class__.__name__}")
+            logger.info(f"📊 Device: {parsed_data['device_id']}, Sensors: {len(parsed_data['sensors'])}")
+        except Exception as e:
+            logger.error(f"❌ Erro ao parsear payload: {e}", exc_info=True)
+            return Response(
+                {"error": f"Erro ao processar payload: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        # Extrair dados parseados
+        device_id = parsed_data['device_id']
+        timestamp = parsed_data['timestamp']
+        sensors = parsed_data['sensors']
+        metadata = parsed_data.get('metadata', {})
         
         # Save to database
         try:
             # 1. Save raw telemetry (MQTT message)
             telemetry = Telemetry.objects.create(
-                device_id=device_id,  # Use device_id from payload, not MQTT client_id
+                device_id=device_id,
                 topic=topic,
                 payload=payload,
                 timestamp=timestamp
@@ -146,58 +170,59 @@ class IngestView(APIView):
             asset_tag = self._extract_asset_tag_from_topic(topic)
             if asset_tag:
                 logger.info(f"🔗 Asset tag extraído do tópico: {asset_tag}")
-                self._auto_link_sensors_to_asset(asset_tag, payload, device_id)
+                # Passar os dados parseados para auto-vinculação
+                self._auto_link_sensors_to_asset(asset_tag, parsed_data, device_id)
             else:
                 logger.warning(f"⚠️ Não foi possível extrair asset_tag do tópico: {topic}")
             
-            # 3. Extract and save individual sensor readings
-            sensors = payload.get('sensors', []) if isinstance(payload, dict) else []
+            # 3. Salvar leituras individuais dos sensores (já parseados)
             readings_created = 0
             
             for sensor in sensors:
-                if isinstance(sensor, dict):
-                    sensor_id = sensor.get('sensor_id')
-                    value = sensor.get('value')
+                if not isinstance(sensor, dict):
+                    continue
+                
+                sensor_id = sensor.get('sensor_id')
+                value = sensor.get('value')
+                
+                if sensor_id and value is not None:
+                    # Labels já vêm processados do parser
+                    labels = sensor.get('labels', {})
+                    if not isinstance(labels, dict):
+                        labels = {}
                     
-                    if sensor_id and value is not None:
-                        # Extract labels (type, unit, location, description)
-                        labels = sensor.get('labels', {})
-                        if not isinstance(labels, dict):
-                            labels = {}
-                        
-                        # Add unit to labels if not already there
-                        if 'unit' not in labels and sensor.get('unit'):
-                            labels['unit'] = sensor.get('unit')
-                        
-                        # Add type to labels if not already there
-                        if 'type' not in labels and sensor.get('type'):
-                            labels['type'] = sensor.get('type')
-                        
-                        Reading.objects.create(
-                            device_id=device_id,
-                            sensor_id=sensor_id,
-                            value=float(value),
-                            labels=labels,
-                            ts=timestamp
-                        )
-                        readings_created += 1
+                    Reading.objects.create(
+                        device_id=device_id,
+                        sensor_id=sensor_id,
+                        value=float(value),
+                        labels=labels,
+                        ts=timestamp
+                    )
+                    readings_created += 1
             
             logger.info(
-                f"Telemetry saved: tenant={tenant_slug}, "
-                f"device={device_id}, topic={topic}"
+                f"✅ Telemetry saved: tenant={tenant_slug}, "
+                f"device={device_id}, topic={topic}, format={metadata.get('format', 'unknown')}"
             )
             logger.info(f"📊 Created {readings_created} sensor readings")
             
-            return Response(
-                {
-                    "status": "accepted",
-                    "id": telemetry.id,
-                    "device_id": telemetry.device_id,
-                    "timestamp": telemetry.timestamp.isoformat(),
-                    "sensors_saved": readings_created
-                },
-                status=status.HTTP_202_ACCEPTED
-            )
+            # Preparar resposta com informações do parser
+            response_data = {
+                "status": "accepted",
+                "id": telemetry.id,
+                "device_id": telemetry.device_id,
+                "timestamp": telemetry.timestamp.isoformat(),
+                "sensors_saved": readings_created,
+                "format": metadata.get('format', 'unknown')
+            }
+            
+            # Adicionar informações de gateway se disponível (formato SenML)
+            if metadata.get('gateway_id'):
+                response_data['gateway_id'] = metadata['gateway_id']
+            if metadata.get('model'):
+                response_data['model'] = metadata['model']
+            
+            return Response(response_data, status=status.HTTP_202_ACCEPTED)
             
         except Exception as e:
             logger.error(f"Failed to save telemetry: {e}", exc_info=True)

@@ -286,6 +286,15 @@ MINIO_USE_SSL = os.getenv('MINIO_USE_SSL', 'False') == 'True'
 # EMQX / MQTT
 EMQX_URL = os.getenv('EMQX_URL', 'mqtt://emqx:1883')
 
+# ============================================================================
+# PAYLOAD PARSERS - Sistema plugável para diferentes formatos de dispositivos
+# ============================================================================
+PAYLOAD_PARSER_MODULES = [
+    'apps.ingest.parsers.standard',      # Formato padrão TrakSense
+    'apps.ingest.parsers.khomp_senml',   # Gateway LoRaWAN Khomp (SenML)
+    # Adicione novos parsers aqui conforme necessário
+]
+
 # Email (Mailpit for development)
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = os.getenv('MAILPIT_SMTP_HOST', 'mailpit')
