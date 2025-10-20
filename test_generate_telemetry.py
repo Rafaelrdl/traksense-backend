@@ -143,7 +143,7 @@ def generate_telemetry(tenant_schema='umc', hours=24, interval_seconds=60):
                 
                 # Inicializar valor base
                 if sensor_key not in sensor_last_values:
-                    sensor_last_values[sensor_key] = generate_sensor_value(sensor.sensor_type)
+                    sensor_last_values[sensor_key] = generate_sensor_value(sensor.metric_type)
                 
                 # Gerar série temporal
                 current_time = start_time
@@ -152,23 +152,23 @@ def generate_telemetry(tenant_schema='umc', hours=24, interval_seconds=60):
                 for i in range(total_points):
                     # Gerar valor com continuidade
                     value = generate_sensor_value(
-                        sensor.sensor_type,
+                        sensor.metric_type,
                         base_value=sensor_last_values[sensor_key]
                     )
                     sensor_last_values[sensor_key] = value
                     
                     # Labels
                     labels = {
-                        'sensor_name': sensor.name,
-                        'sensor_type': sensor.sensor_type,
-                        'unit': get_unit_for_sensor_type(sensor.sensor_type),
+                        'sensor_name': sensor.tag,
+                        'sensor_type': sensor.metric_type,
+                        'unit': get_unit_for_sensor_type(sensor.metric_type),
                         'asset_id': str(sensor.device.asset_id) if sensor.device.asset_id else None
                     }
                     
                     # Criar reading
                     reading = Reading(
                         device_id=device.serial_number,
-                        sensor_id=f"{sensor.sensor_type}_{sensor.id}",
+                        sensor_id=f"{sensor.metric_type}_{sensor.id}",
                         value=value,
                         labels=labels,
                         ts=current_time,
@@ -183,7 +183,7 @@ def generate_telemetry(tenant_schema='umc', hours=24, interval_seconds=60):
                 Reading.objects.bulk_create(sensor_readings, batch_size=500)
                 device_readings += len(sensor_readings)
                 
-                print(f"   ✅ {sensor.name} ({sensor.sensor_type}): {len(sensor_readings)} readings")
+                print(f"   ✅ {sensor.tag} ({sensor.metric_type}): {len(sensor_readings)} readings")
             
             readings_created += device_readings
             print(f"      Total device {device.name}: {device_readings} readings")
