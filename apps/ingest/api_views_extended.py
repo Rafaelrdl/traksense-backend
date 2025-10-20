@@ -419,6 +419,13 @@ class DeviceSummaryView(APIView):
             'avg_interval': f"{int(avg_interval or 0)}s" if avg_interval else 'N/A'
         }
         
+        # DEBUG: Log response antes de retornar
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"📊 Summary response for {device_id}: {len(sensors)} sensors")
+        if sensors:
+            logger.info(f"📊 First sensor example: {sensors[0]}")
+        
         return Response({
             'device_id': device_id,
             'status': device_status,
