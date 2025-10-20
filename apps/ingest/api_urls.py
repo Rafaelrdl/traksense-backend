@@ -7,6 +7,11 @@ from .api_views import (
     ReadingListView,
     TimeSeriesAggregateView
 )
+from .api_views_extended import (
+    LatestReadingsView,
+    DeviceHistoryView,
+    DeviceSummaryView
+)
 
 app_name = 'telemetry'
 
@@ -19,4 +24,9 @@ urlpatterns = [
     
     # Aggregated time-series (Continuous Aggregates)
     path('series/', TimeSeriesAggregateView.as_view(), name='series-aggregate'),
+    
+    # Device-centric endpoints (FASE 3)
+    path('latest/<str:device_id>/', LatestReadingsView.as_view(), name='latest-readings'),
+    path('history/<str:device_id>/', DeviceHistoryView.as_view(), name='device-history'),
+    path('device/<str:device_id>/summary/', DeviceSummaryView.as_view(), name='device-summary'),
 ]
