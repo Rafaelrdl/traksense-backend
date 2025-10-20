@@ -69,6 +69,10 @@ class IngestView(APIView):
         
         # Validate payload structure
         data = request.data
+        
+        # DEBUG: Log incoming data
+        logger.info(f"📥 Ingest received data: {data}")
+        
         if not isinstance(data, dict):
             logger.warning(f"Invalid payload type: {type(data)}")
             return Response(
@@ -82,9 +86,14 @@ class IngestView(APIView):
         payload = data.get('payload')
         ts = data.get('ts')  # Unix timestamp in milliseconds
         
-        # Validate required fields
-        if not all([client_id, topic, payload, ts]):
-            missing = [f for f in ['client_id', 'topic', 'payload', 'ts'] 
+        # Handle "undefined" string from EMQX (JavaScript undefined becomes string)
+        if client_id == "undefined":
+            client_id = None
+            logger.info("client_id was 'undefined' string, setting to None")
+        
+        # Validate required fields (client_id is optional, will use device_id from payload)
+        if not all([topic, payload, ts]):
+            missing = [f for f in ['topic', 'payload', 'ts'] 
                       if not data.get(f)]
             logger.warning(f"Missing required fields: {missing}")
             return Response(
@@ -114,10 +123,16 @@ class IngestView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
         
+        # Extract device_id from payload (correct device ID, not MQTT client_id)
+        device_id = payload.get('device_id') if isinstance(payload, dict) else None
+        if not device_id:
+            logger.warning(f"Missing device_id in payload. Using client_id as fallback: {client_id}")
+            device_id = client_id
+        
         # Save to database
         try:
             telemetry = Telemetry.objects.create(
-                device_id=client_id,
+                device_id=device_id,  # Use device_id from payload, not MQTT client_id
                 topic=topic,
                 payload=payload,
                 timestamp=timestamp
