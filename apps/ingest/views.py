@@ -44,6 +44,13 @@ class IngestView(APIView):
         """
         Process incoming telemetry data from EMQX.
         """
+        logger.info("=" * 60)
+        logger.info("🔵 INGEST POST INICIADO")
+        logger.info(f"Headers: {dict(request.headers)}")
+        logger.info(f"Content-Type: {request.content_type}")
+        logger.info(f"Body (primeiros 500 chars): {request.body[:500]}")
+        logger.info("=" * 60)
+        
         # Extract tenant from header
         tenant_slug = request.headers.get('x-tenant')
         if not tenant_slug:
@@ -81,17 +88,12 @@ class IngestView(APIView):
             )
         
         # Extract fields from EMQX payload
-        client_id = data.get('client_id')
+        client_id = data.get('client_id')  # Optional, will use device_id from payload
         topic = data.get('topic')
         payload = data.get('payload')
         ts = data.get('ts')  # Unix timestamp in milliseconds
         
-        # Handle "undefined" string from EMQX (JavaScript undefined becomes string)
-        if client_id == "undefined":
-            client_id = None
-            logger.info("client_id was 'undefined' string, setting to None")
-        
-        # Validate required fields (client_id is optional, will use device_id from payload)
+        # Validate required fields (client_id is optional)
         if not all([topic, payload, ts]):
             missing = [f for f in ['topic', 'payload', 'ts'] 
                       if not data.get(f)]

@@ -99,8 +99,9 @@ def publish_telemetry():
     """
     print(f"🔌 Conectando ao broker MQTT em {MQTT_HOST}:{MQTT_PORT}...")
     
-    # Criar cliente MQTT
-    client = mqtt.Client(client_id=f"test_publisher_{int(time.time())}")
+    # Criar cliente MQTT usando o DEVICE_ID como client_id
+    # Isso garante que o EMQX capture o client_id correto
+    client = mqtt.Client(client_id=DEVICE_ID)
     client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
     client.on_connect = on_connect
     client.on_publish = on_publish
