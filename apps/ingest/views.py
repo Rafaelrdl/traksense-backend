@@ -9,7 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.tenants.models import Tenant
-from .models import Telemetry
+from .models import Telemetry, Reading
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +133,7 @@ class IngestView(APIView):
         
         # Save to database
         try:
+            # 1. Save raw telemetry (MQTT message)
             telemetry = Telemetry.objects.create(
                 device_id=device_id,  # Use device_id from payload, not MQTT client_id
                 topic=topic,
@@ -140,17 +141,51 @@ class IngestView(APIView):
                 timestamp=timestamp
             )
             
+            # 2. Extract and save individual sensor readings
+            sensors = payload.get('sensors', []) if isinstance(payload, dict) else []
+            readings_created = 0
+            
+            for sensor in sensors:
+                if isinstance(sensor, dict):
+                    sensor_id = sensor.get('sensor_id')
+                    value = sensor.get('value')
+                    
+                    if sensor_id and value is not None:
+                        # Extract labels (type, unit, location, description)
+                        labels = sensor.get('labels', {})
+                        if not isinstance(labels, dict):
+                            labels = {}
+                        
+                        # Add unit to labels if not already there
+                        if 'unit' not in labels and sensor.get('unit'):
+                            labels['unit'] = sensor.get('unit')
+                        
+                        # Add type to labels if not already there
+                        if 'type' not in labels and sensor.get('type'):
+                            labels['type'] = sensor.get('type')
+                        
+                        Reading.objects.create(
+                            device_id=device_id,
+                            sensor_id=sensor_id,
+                            value=float(value),
+                            labels=labels,
+                            ts=timestamp
+                        )
+                        readings_created += 1
+            
             logger.info(
                 f"Telemetry saved: tenant={tenant_slug}, "
-                f"device={client_id}, topic={topic}"
+                f"device={device_id}, topic={topic}"
             )
+            logger.info(f"📊 Created {readings_created} sensor readings")
             
             return Response(
                 {
                     "status": "accepted",
                     "id": telemetry.id,
                     "device_id": telemetry.device_id,
-                    "timestamp": telemetry.timestamp.isoformat()
+                    "timestamp": telemetry.timestamp.isoformat(),
+                    "sensors_saved": readings_created
                 },
                 status=status.HTTP_202_ACCEPTED
             )
