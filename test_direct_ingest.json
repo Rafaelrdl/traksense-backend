@@ -1,0 +1,50 @@
+{
+  "topic": "tenants/umc/GW-1760908415",
+  "payload": {
+    "device_id": "GW-1760908415",
+    "timestamp": "2025-10-20T03:53:00.000Z",
+    "sensors": [
+      {
+        "sensor_id": "TEMP-AMB-001",
+        "type": "temperature",
+        "value": 23.5,
+        "unit": "C",
+        "labels": {
+          "type": "temperature",
+          "description": "Temperatura Ambiente"
+        }
+      },
+      {
+        "sensor_id": "HUM-001",
+        "type": "humidity",
+        "value": 65.2,
+        "unit": "percent",
+        "labels": {
+          "type": "humidity",
+          "description": "Umidade Relativa"
+        }
+      },
+      {
+        "sensor_id": "TEMP-WATER-IN-001",
+        "type": "temperature",
+        "value": 12.5,
+        "unit": "C",
+        "labels": {
+          "type": "temperature",
+          "description": "Temperatura Entrada Agua"
+        }
+      },
+      {
+        "sensor_id": "TEMP-WATER-OUT-001",
+        "type": "temperature",
+        "value": 7.2,
+        "unit": "C",
+        "labels": {
+          "type": "temperature",
+          "description": "Temperatura Saida Agua"
+        }
+      }
+    ]
+  },
+  "ts": 1729393980000
+}
