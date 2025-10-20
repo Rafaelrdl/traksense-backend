@@ -141,7 +141,16 @@ class IngestView(APIView):
                 timestamp=timestamp
             )
             
-            # 2. Extract and save individual sensor readings
+            # 2. Auto-vincular sensores ao ativo baseado no tópico MQTT
+            # Padrão esperado: tenants/{tenant}/assets/{asset_tag}/telemetry
+            asset_tag = self._extract_asset_tag_from_topic(topic)
+            if asset_tag:
+                logger.info(f"🔗 Asset tag extraído do tópico: {asset_tag}")
+                self._auto_link_sensors_to_asset(asset_tag, payload, device_id)
+            else:
+                logger.warning(f"⚠️ Não foi possível extrair asset_tag do tópico: {topic}")
+            
+            # 3. Extract and save individual sensor readings
             sensors = payload.get('sensors', []) if isinstance(payload, dict) else []
             readings_created = 0
             
@@ -196,3 +205,129 @@ class IngestView(APIView):
                 {"error": "Failed to save telemetry"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def _extract_asset_tag_from_topic(self, topic):
+        """
+        Extrai o asset_tag do tópico MQTT.
+        
+        Padrões suportados:
+        - tenants/{tenant}/assets/{asset_tag}/telemetry
+        - tenants/{tenant}/devices/{device_id}/assets/{asset_tag}
+        - {asset_tag}/telemetry
+        
+        Args:
+            topic (str): Tópico MQTT completo
+        
+        Returns:
+            str or None: Asset tag extraído ou None se não encontrado
+        """
+        parts = topic.split('/')
+        
+        # Padrão 1: tenants/{tenant}/assets/{asset_tag}/telemetry
+        if 'assets' in parts:
+            try:
+                asset_idx = parts.index('assets')
+                if asset_idx + 1 < len(parts):
+                    asset_tag = parts[asset_idx + 1]
+                    logger.info(f"✅ Asset tag extraído (padrão 1): {asset_tag}")
+                    return asset_tag
+            except (ValueError, IndexError):
+                pass
+        
+        # Padrão 2: {asset_tag}/telemetry (tag diretamente)
+        # Valida se o primeiro componente parece uma tag de ativo (ex: CH-001, AHU-001)
+        if len(parts) >= 1:
+            potential_tag = parts[0]
+            if '-' in potential_tag and len(potential_tag) <= 50:
+                logger.info(f"✅ Asset tag extraído (padrão 2): {potential_tag}")
+                return potential_tag
+        
+        return None
+    
+    def _auto_link_sensors_to_asset(self, asset_tag, payload, device_id):
+        """
+        Vincula automaticamente sensores ao ativo baseado no tópico.
+        
+        Fluxo:
+        1. Busca o Asset pelo tag
+        2. Para cada sensor no payload:
+           a. Busca ou cria um Device padrão para o Asset
+           b. Busca o Sensor pelo sensor_id
+           c. Se o Sensor existe mas não está vinculado corretamente, atualiza
+           d. Se o Sensor não existe, apenas registra no log (será criado manualmente)
+        
+        Args:
+            asset_tag (str): Tag do ativo (ex: CH-001)
+            payload (dict): Payload MQTT com lista de sensores
+            device_id (str): ID do dispositivo MQTT
+        """
+        try:
+            from apps.assets.models import Asset, Device, Sensor
+            
+            # Busca o ativo pelo tag
+            try:
+                asset = Asset.objects.get(tag=asset_tag, is_active=True)
+                logger.info(f"🎯 Asset encontrado: {asset.tag} - {asset.name}")
+            except Asset.DoesNotExist:
+                logger.warning(f"⚠️ Asset não encontrado: {asset_tag}")
+                return
+            
+            # Busca ou cria um Device padrão para o ativo
+            # Usa o mqtt_client_id como referência
+            device, device_created = Device.objects.get_or_create(
+                mqtt_client_id=device_id,
+                defaults={
+                    'asset': asset,
+                    'name': f'Gateway {asset_tag}',
+                    'serial_number': f'SN-{device_id}',
+                    'device_type': 'GATEWAY',
+                    'status': 'ONLINE'
+                }
+            )
+            
+            if device_created:
+                logger.info(f"✨ Device criado automaticamente: {device.name} para asset {asset_tag}")
+            else:
+                # Se o device já existe mas está em outro asset, atualiza
+                if device.asset_id != asset.id:
+                    logger.info(f"🔄 Device {device.name} movido de {device.asset.tag} para {asset_tag}")
+                    device.asset = asset
+                    device.save(update_fields=['asset', 'updated_at'])
+            
+            # Processa cada sensor no payload
+            sensors = payload.get('sensors', []) if isinstance(payload, dict) else []
+            
+            for sensor_data in sensors:
+                if not isinstance(sensor_data, dict):
+                    continue
+                
+                sensor_id = sensor_data.get('sensor_id')
+                if not sensor_id:
+                    continue
+                
+                try:
+                    # Busca o sensor pelo tag (sensor_id)
+                    sensor = Sensor.objects.filter(tag=sensor_id, is_active=True).first()
+                    
+                    if sensor:
+                        # Se o sensor existe mas está em device diferente, atualiza
+                        if sensor.device_id != device.id:
+                            old_asset = sensor.device.asset.tag if sensor.device else 'N/A'
+                            logger.info(f"🔄 Sensor {sensor_id} movido de {old_asset} para {asset_tag}")
+                            sensor.device = device
+                            sensor.save(update_fields=['device', 'updated_at'])
+                        else:
+                            logger.debug(f"✅ Sensor {sensor_id} já vinculado ao asset {asset_tag}")
+                    else:
+                        # Sensor não existe - apenas registra no log
+                        # O técnico deve criar manualmente no admin
+                        logger.info(
+                            f"ℹ️ Sensor {sensor_id} não encontrado. "
+                            f"Criar manualmente no admin e vincular ao device {device.mqtt_client_id}"
+                        )
+                
+                except Exception as e:
+                    logger.error(f"❌ Erro ao processar sensor {sensor_id}: {e}", exc_info=True)
+        
+        except Exception as e:
+            logger.error(f"❌ Erro no auto-link de sensores ao asset {asset_tag}: {e}", exc_info=True)

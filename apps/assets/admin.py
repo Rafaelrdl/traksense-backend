@@ -322,6 +322,9 @@ class SensorAdmin(admin.ModelAdmin):
     
     autocomplete_fields = ['device']
     
+    # Adiciona ações em lote
+    actions = ['vincular_sensores_ao_ativo', 'vincular_sensores_ao_device']
+    
     fieldsets = (
         ('Identificação', {
             'fields': ('tag', 'device', 'asset_tag')
@@ -385,4 +388,145 @@ class SensorAdmin(admin.ModelAdmin):
         else:
             return format_html('<span style="color: red;">{} atrás</span>', timesince(obj.last_reading_at))
     last_reading_display.short_description = 'Última Atualização'
+    
+    @admin.action(description='🔗 Vincular sensores selecionados a um Ativo')
+    def vincular_sensores_ao_ativo(self, request, queryset):
+        """
+        Ação em lote para vincular múltiplos sensores a um ativo.
+        
+        Fluxo:
+        1. Usuário seleciona múltiplos sensores
+        2. Abre modal para selecionar o ativo de destino
+        3. Sistema busca ou cria um Device padrão para o ativo
+        4. Vincula todos os sensores ao Device do ativo
+        """
+        from django import forms
+        from django.shortcuts import render, redirect
+        from django.contrib import messages
+        
+        class AssetSelectionForm(forms.Form):
+            """Formulário para selecionar o ativo de destino"""
+            asset = forms.ModelChoiceField(
+                queryset=Asset.objects.filter(is_active=True).order_by('tag'),
+                label="Selecione o Ativo",
+                help_text="Todos os sensores selecionados serão vinculados a este ativo",
+                widget=forms.Select(attrs={'style': 'width: 100%; font-size: 14px;'})
+            )
+            mqtt_client_id = forms.CharField(
+                label="MQTT Client ID (opcional)",
+                required=False,
+                help_text="ID do dispositivo MQTT. Se vazio, será gerado automaticamente como GW-{ASSET_TAG}",
+                widget=forms.TextInput(attrs={'style': 'width: 100%;', 'placeholder': 'Ex: GW-CH-001'})
+            )
+        
+        # Se o usuário confirmou a seleção
+        if 'apply' in request.POST:
+            form = AssetSelectionForm(request.POST)
+            if form.is_valid():
+                asset = form.cleaned_data['asset']
+                mqtt_client_id = form.cleaned_data.get('mqtt_client_id') or f'GW-{asset.tag}'
+                
+                # Busca ou cria um Device padrão para o ativo
+                device, device_created = Device.objects.get_or_create(
+                    mqtt_client_id=mqtt_client_id,
+                    defaults={
+                        'asset': asset,
+                        'name': f'Gateway {asset.tag}',
+                        'serial_number': f'SN-{mqtt_client_id}',
+                        'device_type': 'GATEWAY',
+                        'status': 'OFFLINE'
+                    }
+                )
+                
+                if device_created:
+                    messages.success(
+                        request,
+                        f"✨ Device '{device.name}' criado automaticamente para o ativo {asset.tag}"
+                    )
+                else:
+                    # Se o device já existe mas está em outro asset, atualiza
+                    if device.asset_id != asset.id:
+                        messages.warning(
+                            request,
+                            f"⚠️ Device '{device.mqtt_client_id}' foi movido de {device.asset.tag} para {asset.tag}"
+                        )
+                        device.asset = asset
+                        device.save(update_fields=['asset', 'updated_at'])
+                
+                # Atualiza todos os sensores selecionados
+                count = 0
+                for sensor in queryset:
+                    if sensor.device_id != device.id:
+                        sensor.device = device
+                        sensor.save(update_fields=['device', 'updated_at'])
+                        count += 1
+                
+                messages.success(
+                    request,
+                    f"✅ {count} sensores vinculados ao ativo '{asset.tag}' através do device '{device.mqtt_client_id}'"
+                )
+                return redirect(request.get_full_path())
+        
+        # Exibe o formulário de seleção
+        form = AssetSelectionForm()
+        
+        context = {
+            'sensors': queryset,
+            'form': form,
+            'title': 'Vincular Sensores ao Ativo',
+            'opts': self.model._meta,
+            'site_header': admin.site.site_header,
+            'site_title': admin.site.site_title,
+        }
+        
+        return render(request, 'admin/sensors/bulk_assign_asset.html', context)
+    
+    @admin.action(description='🔧 Vincular sensores selecionados a um Device específico')
+    def vincular_sensores_ao_device(self, request, queryset):
+        """
+        Ação em lote para vincular múltiplos sensores a um device específico.
+        
+        Útil quando o técnico quer controle fino sobre qual device usar.
+        """
+        from django import forms
+        from django.shortcuts import render, redirect
+        from django.contrib import messages
+        
+        class DeviceSelectionForm(forms.Form):
+            """Formulário para selecionar o device de destino"""
+            device = forms.ModelChoiceField(
+                queryset=Device.objects.filter(is_active=True).select_related('asset').order_by('asset__tag', 'name'),
+                label="Selecione o Device",
+                help_text="Todos os sensores selecionados serão vinculados a este device",
+                widget=forms.Select(attrs={'style': 'width: 100%; font-size: 14px;'})
+            )
+        
+        # Se o usuário confirmou a seleção
+        if 'apply' in request.POST:
+            form = DeviceSelectionForm(request.POST)
+            if form.is_valid():
+                device = form.cleaned_data['device']
+                
+                # Atualiza todos os sensores selecionados
+                count = queryset.update(device=device)
+                
+                messages.success(
+                    request,
+                    f"✅ {count} sensores vinculados ao device '{device.name}' (Asset: {device.asset.tag})"
+                )
+                return redirect(request.get_full_path())
+        
+        # Exibe o formulário de seleção
+        form = DeviceSelectionForm()
+        
+        context = {
+            'sensors': queryset,
+            'form': form,
+            'title': 'Vincular Sensores ao Device',
+            'opts': self.model._meta,
+            'site_header': admin.site.site_header,
+            'site_title': admin.site.site_title,
+        }
+        
+        return render(request, 'admin/sensors/bulk_assign_device.html', context)
 
