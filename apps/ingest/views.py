@@ -344,15 +344,89 @@ class IngestView(APIView):
                         else:
                             logger.debug(f"✅ Sensor {sensor_id} já vinculado ao asset {asset_tag}")
                     else:
-                        # Sensor não existe - apenas registra no log
-                        # O técnico deve criar manualmente no admin
-                        logger.info(
-                            f"ℹ️ Sensor {sensor_id} não encontrado. "
-                            f"Criar manualmente no admin e vincular ao device {device.mqtt_client_id}"
+                        # ✨ AUTO-REGISTRO: Cria o sensor automaticamente
+                        sensor = self._auto_create_sensor(
+                            device=device,
+                            sensor_id=sensor_id,
+                            sensor_data=sensor_data
                         )
+                        if sensor:
+                            logger.info(
+                                f"✨ Sensor criado automaticamente: {sensor_id} → "
+                                f"{sensor.get_metric_type_display()} ({sensor.unit})"
+                            )
                 
                 except Exception as e:
                     logger.error(f"❌ Erro ao processar sensor {sensor_id}: {e}", exc_info=True)
         
         except Exception as e:
             logger.error(f"❌ Erro no auto-link de sensores ao asset {asset_tag}: {e}", exc_info=True)
+    
+    def _auto_create_sensor(self, device, sensor_id, sensor_data):
+        """
+        Cria automaticamente um sensor baseado nos dados do payload.
+        
+        Mapeia os tipos e unidades do payload para os tipos suportados
+        pelo modelo Sensor.
+        
+        Args:
+            device: Objeto Device ao qual vincular o sensor
+            sensor_id: Tag/ID do sensor
+            sensor_data: Dados do sensor do payload com 'labels', 'value', etc.
+        
+        Returns:
+            Sensor: Objeto Sensor criado ou None se falhar
+        """
+        try:
+            from apps.assets.models import Sensor
+            
+            labels = sensor_data.get('labels', {})
+            unit = labels.get('unit', 'N/A')
+            sensor_type = labels.get('type', 'unknown')
+            
+            # Mapeamento de tipos do payload para SENSOR_TYPE_CHOICES
+            type_mapping = {
+                'temperature': 'temp_supply',
+                'humidity': 'humidity',
+                'pressure': 'pressure_suction',
+                'signal_strength': 'maintenance',  # RSSI → manutenção/status
+                'power': 'power_kw',
+                'energy': 'energy_kwh',
+                'voltage': 'voltage',
+                'current': 'current',
+                'ambient': 'temp_external',
+                'binary_counter': 'maintenance',
+                'counter': 'maintenance',
+                'unknown': 'maintenance',
+            }
+            
+            # Determina o metric_type baseado no tipo do sensor
+            metric_type = type_mapping.get(sensor_type, 'maintenance')
+            
+            # Se temos informações mais específicas nos labels, usa elas
+            if 'metric_type' in labels:
+                metric_type = labels['metric_type']
+            
+            # Cria o sensor
+            sensor = Sensor.objects.create(
+                tag=sensor_id,
+                device=device,
+                metric_type=metric_type,
+                unit=unit,
+                thresholds={},  # Pode ser configurado posteriormente
+                is_active=True
+            )
+            
+            logger.info(
+                f"✅ Sensor auto-criado: {sensor_id} | "
+                f"Type: {metric_type} | Unit: {unit} | Device: {device.mqtt_client_id}"
+            )
+            
+            return sensor
+            
+        except Exception as e:
+            logger.error(
+                f"❌ Erro ao criar sensor automaticamente {sensor_id}: {e}",
+                exc_info=True
+            )
+            return None

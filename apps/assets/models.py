@@ -627,8 +627,9 @@ class Sensor(models.Model):
         ordering = ['tag']
         verbose_name = 'Sensor'
         verbose_name_plural = 'Sensors'
-        # Um device não pode ter dois sensores do mesmo tipo
-        unique_together = [('device', 'metric_type')]
+        # Removido unique_together para permitir múltiplos sensores do mesmo tipo
+        # (ex: Khomp pode ter múltiplos sensores de temperatura)
+        # A unicidade é garantida pelo campo 'tag'
         indexes = [
             models.Index(fields=['tag']),
             models.Index(fields=['device', 'metric_type']),

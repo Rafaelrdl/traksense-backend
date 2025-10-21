@@ -5,6 +5,7 @@ Este parser processa payloads no formato SenML (Sensor Measurement Lists)
 conforme RFC 8428, usado pelos gateways Khomp.
 """
 import datetime
+import json
 import logging
 from typing import Dict, Any, List, Optional
 
@@ -89,6 +90,17 @@ class KhompSenMLParser(PayloadParser):
         # Se o payload vem encapsulado do EMQX
         if isinstance(payload, dict) and 'payload' in payload:
             inner_payload = payload.get('payload')
+            
+            # ✨ NOVO: Se o inner_payload é uma string, tenta converter para JSON
+            if isinstance(inner_payload, str):
+                try:
+                    inner_payload = json.loads(inner_payload)
+                    # Atualiza o payload original com o JSON parseado
+                    payload['payload'] = inner_payload
+                    logger.info(f"✅ Payload string convertido para JSON com {len(inner_payload)} elementos")
+                except json.JSONDecodeError as e:
+                    logger.warning(f"❌ Erro ao decodificar payload JSON string: {e}")
+                    return False
         else:
             inner_payload = payload
         
@@ -124,6 +136,15 @@ class KhompSenMLParser(PayloadParser):
         # Extrair o payload real (pode vir encapsulado do EMQX)
         if isinstance(payload, dict) and 'payload' in payload:
             senml_data = payload.get('payload')
+            
+            # ✨ NOVO: Se o senml_data é uma string, tenta converter para JSON
+            if isinstance(senml_data, str):
+                try:
+                    senml_data = json.loads(senml_data)
+                    logger.info(f"✅ Parse: Payload string convertido para JSON")
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Erro ao decodificar payload JSON string: {e}")
+            
             emqx_wrapper = payload
         else:
             senml_data = payload
