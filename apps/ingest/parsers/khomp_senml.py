@@ -9,7 +9,11 @@ import json
 import logging
 from typing import Dict, Any, List, Optional
 
+from django.utils import timezone
+from django_tenants.utils import schema_context
+
 from apps.ingest.parsers import PayloadParser
+from apps.assets.models import Device, Sensor, Asset
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +235,112 @@ class KhompSenMLParser(PayloadParser):
             f"sensors={len(sensors)}, gateway={gateway_id}, model={model}"
         )
         
+        # 🆕 AUTO-REGISTRO: Registrar dispositivo e sensores automaticamente
+        self._auto_register_device(device_id, gateway_id, model)
+        for sensor_reading in sensors:
+            self._auto_register_sensor(device_id, sensor_reading)
+        
         return result
+    
+    def _auto_register_device(self, device_id: str, gateway_id: Optional[str], model: Optional[str]) -> None:
+        """
+        Auto-registra um dispositivo se ele não existir no banco de dados.
+        
+        Args:
+            device_id: ID MQTT do dispositivo (MAC address)
+            gateway_id: ID do gateway (opcional)
+            model: Modelo do dispositivo (opcional)
+        """
+        try:
+            # Verificar se o dispositivo já existe
+            device = Device.objects.filter(mqtt_client_id=device_id).first()
+            
+            if device:
+                # Atualizar last_seen para dispositivos existentes
+                device.last_seen = timezone.now()
+                device.save(update_fields=['last_seen'])
+                logger.debug(f"🔄 Dispositivo existente atualizado: {device_id}")
+            else:
+                # Criar novo dispositivo
+                # Tentar encontrar um asset padrão para vincular
+                default_asset = Asset.objects.filter(is_active=True).first()
+                
+                device = Device.objects.create(
+                    name=f"Device {device_id[:8]}",  # Nome curto baseado no MAC
+                    serial_number=device_id,
+                    mqtt_client_id=device_id,
+                    device_type='GATEWAY',
+                    firmware_version=model or 'Unknown',
+                    asset=default_asset,
+                    is_active=True,
+                    last_seen=timezone.now()
+                )
+                
+                logger.info(
+                    f"✨ Novo dispositivo auto-registrado: {device_id} "
+                    f"(model={model}, asset={default_asset.name if default_asset else 'None'})"
+                )
+        except Exception as e:
+            logger.error(f"❌ Erro ao auto-registrar dispositivo {device_id}: {e}")
+    
+    def _auto_register_sensor(self, device_id: str, sensor_reading: Dict[str, Any]) -> None:
+        """
+        Auto-registra um sensor se ele não existir no banco de dados.
+        
+        Args:
+            device_id: ID MQTT do dispositivo
+            sensor_reading: Dicionário com os dados da leitura do sensor
+        """
+        try:
+            sensor_id = sensor_reading.get('sensor_id')
+            if not sensor_id:
+                return
+            
+            # Buscar o dispositivo
+            device = Device.objects.filter(mqtt_client_id=device_id).first()
+            if not device:
+                logger.warning(f"⚠️ Dispositivo {device_id} não encontrado para auto-registro do sensor {sensor_id}")
+                return
+            
+            # Verificar se o sensor já existe
+            sensor = Sensor.objects.filter(device=device, tag=sensor_id).first()
+            
+            if not sensor:
+                # Extrair informações do sensor
+                labels = sensor_reading.get('labels', {})
+                sensor_type = labels.get('type', 'unknown')
+                unit = labels.get('unit', '')
+                name = labels.get('name', sensor_id)
+                
+                # Mapear sensor_type para metric_type
+                metric_type_map = {
+                    'temperature': 'temperature',
+                    'humidity': 'humidity',
+                    'pressure': 'pressure',
+                    'counter': 'counter',
+                    'signal_strength': 'signal',
+                    'battery': 'voltage',
+                    'door_state': 'status',
+                    'unknown': 'other'
+                }
+                metric_type = metric_type_map.get(sensor_type, 'other')
+                
+                # Criar novo sensor
+                sensor = Sensor.objects.create(
+                    device=device,
+                    tag=sensor_id,
+                    name=f"{name} ({sensor_id[:12]})",  # Nome descritivo
+                    metric_type=metric_type,
+                    unit=unit,
+                    is_active=True
+                )
+                
+                logger.info(
+                    f"✨ Novo sensor auto-registrado: {sensor_id} "
+                    f"(device={device_id[:8]}, type={sensor_type}, unit={unit})"
+                )
+        except Exception as e:
+            logger.error(f"❌ Erro ao auto-registrar sensor {sensor_reading.get('sensor_id')}: {e}")
     
     def _process_sensor_element(self, element: Dict[str, Any], base_name: str) -> Optional[Dict[str, Any]]:
         """
