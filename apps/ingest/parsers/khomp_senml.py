@@ -226,7 +226,9 @@ class KhompSenMLParser(PayloadParser):
                 'model': model,
                 'gateway_id': gateway_id,
                 'format': 'senml',
-                'base_time': base_time
+                'base_name': base_name,
+                'base_time': base_time,
+                'topic': topic  # 🆕 Incluir tópico para rastreamento
             }
         }
         

@@ -165,13 +165,26 @@ class IngestView(APIView):
                 timestamp=timestamp
             )
             
-            # 2. Auto-vincular sensores ao ativo baseado no tópico MQTT
-            # Padrão esperado: tenants/{tenant}/assets/{asset_tag}/telemetry
-            asset_tag = self._extract_asset_tag_from_topic(topic)
+            # 2. 🆕 NOVA LÓGICA: Extrair site e asset do tópico e auto-vincular
+            site_name, asset_tag = self._extract_site_and_asset_from_topic(topic)
+            
             if asset_tag:
                 logger.info(f"🔗 Asset tag extraído do tópico: {asset_tag}")
-                # Passar os dados parseados para auto-vinculação
-                self._auto_link_sensors_to_asset(asset_tag, parsed_data, device_id)
+                if site_name:
+                    logger.info(f"📍 Site extraído do tópico: {site_name}")
+                
+                # Criar/atualizar asset, device e sensores automaticamente
+                asset = self._auto_create_and_link_asset(
+                    site_name=site_name,
+                    asset_tag=asset_tag,
+                    device_id=device_id,
+                    parsed_data=parsed_data
+                )
+                
+                if asset:
+                    logger.info(f"✅ Asset {asset_tag} processado no site {asset.site.name}")
+                else:
+                    logger.warning(f"⚠️ Não foi possível processar asset {asset_tag}")
             else:
                 logger.warning(f"⚠️ Não foi possível extrair asset_tag do tópico: {topic}")
             
@@ -230,6 +243,236 @@ class IngestView(APIView):
                 {"error": "Failed to save telemetry"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def _extract_site_and_asset_from_topic(self, topic):
+        """
+        Extrai site_name e asset_tag do tópico MQTT.
+        
+        Padrões suportados:
+        - tenants/{tenant}/sites/{site_name}/assets/{asset_tag}/telemetry (NOVO - com site)
+        - tenants/{tenant}/assets/{asset_tag}/telemetry (legado - sem site)
+        
+        Returns:
+            tuple: (site_name, asset_tag) ou (None, None)
+        """
+        from urllib.parse import unquote
+        
+        parts = topic.split('/')
+        site_name = None
+        asset_tag = None
+        
+        try:
+            # Novo padrão com site
+            if 'sites' in parts and 'assets' in parts:
+                site_idx = parts.index('sites')
+                asset_idx = parts.index('assets')
+                
+                if site_idx + 1 < len(parts):
+                    site_name = parts[site_idx + 1]
+                    # Decodificar URL encoding se necessário
+                    site_name = unquote(site_name)
+                
+                if asset_idx + 1 < len(parts):
+                    asset_tag = parts[asset_idx + 1]
+                    
+                logger.info(f"✅ Extraído do tópico - Site: {site_name}, Asset: {asset_tag}")
+                
+            # Padrão legado sem site (mantém compatibilidade)
+            elif 'assets' in parts:
+                asset_idx = parts.index('assets')
+                if asset_idx + 1 < len(parts):
+                    asset_tag = parts[asset_idx + 1]
+                    logger.info(f"✅ Asset extraído (sem site): {asset_tag}")
+                    
+        except Exception as e:
+            logger.warning(f"⚠️ Erro ao extrair informações do tópico: {e}")
+            
+        return site_name, asset_tag
+    
+    def _detect_asset_type(self, asset_tag):
+        """
+        Detecta o tipo de asset baseado no tag.
+        """
+        tag_upper = asset_tag.upper()
+        
+        if 'CHILLER' in tag_upper or 'CH-' in tag_upper:
+            return 'CHILLER'
+        elif 'AHU' in tag_upper:
+            return 'AHU'
+        elif 'VRF' in tag_upper:
+            return 'VRF'
+        elif 'FCU' in tag_upper:
+            return 'FCU'
+        elif 'SPLIT' in tag_upper:
+            return 'SPLIT'
+        elif 'RTU' in tag_upper:
+            return 'RTU'
+        elif 'COOLING' in tag_upper or 'TOWER' in tag_upper:
+            return 'COOLING_TOWER'
+        else:
+            return 'OTHER'
+    
+    def _auto_create_and_link_asset(self, site_name, asset_tag, device_id, parsed_data):
+        """
+        Cria ou atualiza automaticamente asset e vincula device/sensores.
+        
+        Fluxo:
+        1. Se site_name fornecido, busca ou cria o site
+        2. Busca ou cria o asset no site correto
+        3. Busca ou cria o device e vincula ao asset
+        4. Vincula sensores ao device
+        
+        Args:
+            site_name: Nome do site (pode ser None)
+            asset_tag: Tag do asset
+            device_id: ID MQTT do device
+            parsed_data: Dados parseados do payload (incluindo metadata e sensors)
+        
+        Returns:
+            Asset object ou None
+        """
+        try:
+            from apps.assets.models import Site, Asset, Device, Sensor
+            from django.utils import timezone
+            
+            # 1. Determinar o site
+            site = None
+            if site_name:
+                try:
+                    site = Site.objects.get(name=site_name, is_active=True)
+                    logger.info(f"📍 Site encontrado: {site.name}")
+                except Site.DoesNotExist:
+                    # Criar site automaticamente se não existir
+                    site = Site.objects.create(
+                        name=site_name,
+                        company=site_name,  # Usar o mesmo nome por padrão
+                        sector='Saúde',  # Padrão para UMC
+                        timezone='America/Sao_Paulo',
+                        is_active=True
+                    )
+                    logger.info(f"✨ Site criado automaticamente: {site.name}")
+            else:
+                # Se não tem site no tópico, usar o primeiro site ativo
+                site = Site.objects.filter(is_active=True).first()
+                if site:
+                    logger.info(f"📍 Usando site padrão: {site.name}")
+            
+            if not site:
+                logger.error("❌ Nenhum site disponível para vincular o asset")
+                return None
+            
+            # 2. Buscar ou criar o asset
+            asset, asset_created = Asset.objects.get_or_create(
+                tag=asset_tag,
+                defaults={
+                    'name': f'{asset_tag}',
+                    'site': site,
+                    'asset_type': self._detect_asset_type(asset_tag),
+                    'status': 'OPERATIONAL',
+                    'health_score': 100,
+                    'is_active': True
+                }
+            )
+            
+            if asset_created:
+                logger.info(f"✨ Asset criado automaticamente: {asset.tag} no site {site.name}")
+            else:
+                # Atualizar site do asset se mudou
+                if asset.site != site:
+                    old_site = asset.site.name
+                    asset.site = site
+                    asset.save(update_fields=['site', 'updated_at'])
+                    logger.info(f"🔄 Asset {asset_tag} movido de {old_site} para {site.name}")
+                else:
+                    logger.debug(f"✅ Asset {asset_tag} já existe no site {site.name}")
+            
+            # 3. Buscar ou criar o device e vincular ao asset
+            metadata = parsed_data.get('metadata', {})
+            device, device_created = Device.objects.get_or_create(
+                mqtt_client_id=device_id,
+                defaults={
+                    'asset': asset,
+                    'name': f'Gateway {asset_tag}',
+                    'serial_number': device_id,
+                    'device_type': 'GATEWAY',
+                    'firmware_version': metadata.get('model', 'unknown'),
+                    'status': 'OFFLINE',
+                    'is_active': True,
+                    'last_seen': timezone.now()
+                }
+            )
+            
+            if device_created:
+                logger.info(f"✨ Device criado e vinculado ao asset {asset_tag}")
+            else:
+                # Atualizar asset do device se mudou
+                if device.asset != asset:
+                    old_asset = device.asset.tag if device.asset else 'N/A'
+                    device.asset = asset
+                    device.last_seen = timezone.now()
+                    device.save(update_fields=['asset', 'last_seen', 'updated_at'])
+                    logger.info(f"🔄 Device {device_id} movido de {old_asset} para {asset_tag}")
+                else:
+                    # Apenas atualizar last_seen
+                    device.last_seen = timezone.now()
+                    device.save(update_fields=['last_seen'])
+            
+            # 4. Processar sensores do payload
+            if 'sensors' in parsed_data:
+                for sensor_data in parsed_data['sensors']:
+                    sensor_id = sensor_data.get('sensor_id')
+                    if not sensor_id:
+                        continue
+                    
+                    labels = sensor_data.get('labels', {})
+                    sensor_type = labels.get('type', 'unknown')
+                    unit = labels.get('unit', '')
+                    
+                    # Buscar ou criar sensor
+                    sensor, sensor_created = Sensor.objects.get_or_create(
+                        tag=sensor_id,
+                        device=device,
+                        defaults={
+                            'name': f'{sensor_type.title()} {sensor_id[:12]}',
+                            'metric_type': self._map_sensor_type_to_metric(sensor_type),
+                            'unit': unit,
+                            'is_online': True,
+                            'is_active': True
+                        }
+                    )
+                    
+                    if sensor_created:
+                        logger.info(f"✨ Sensor {sensor_id} criado e vinculado ao device {device_id}")
+                    
+                    # Atualizar último valor do sensor
+                    value = sensor_data.get('value')
+                    if value is not None:
+                        sensor.last_value = value
+                        sensor.last_reading_at = timezone.now()
+                        sensor.is_online = True
+                        sensor.save(update_fields=['last_value', 'last_reading_at', 'is_online', 'updated_at'])
+            
+            return asset
+            
+        except Exception as e:
+            logger.error(f"❌ Erro ao criar/vincular asset: {e}", exc_info=True)
+            return None
+    
+    def _map_sensor_type_to_metric(self, sensor_type):
+        """
+        Mapeia sensor_type do parser para metric_type do model Sensor.
+        """
+        mapping = {
+            'temperature': 'temperature',
+            'humidity': 'humidity',
+            'pressure': 'pressure',
+            'counter': 'counter',
+            'signal_strength': 'signal',
+            'battery': 'voltage',
+            'door_state': 'status',
+            'unknown': 'other'
+        }
+        return mapping.get(sensor_type, 'other')
     
     def _extract_asset_tag_from_topic(self, topic):
         """

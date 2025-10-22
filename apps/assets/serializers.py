@@ -187,6 +187,7 @@ class DeviceListSerializer(serializers.ModelSerializer):
             'id',
             'name',
             'serial_number',
+            'mqtt_client_id',  # 🆕 IMPORTANTE: Necessário para telemetria
             'asset',
             'asset_tag',
             'device_type',
