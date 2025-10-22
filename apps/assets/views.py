@@ -95,6 +95,40 @@ class SiteViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
     
     @action(detail=True, methods=['get'])
+    def devices(self, request, pk=None):
+        """
+        Lista todos os devices de um site específico (via assets).
+        
+        GET /api/sites/{id}/devices/
+        
+        Query params:
+            - device_type: Filtra por tipo de dispositivo (GATEWAY, CONTROLLER, etc)
+            - status: Filtra por status
+            - is_online: Filtra por status online (true/false)
+        """
+        site = self.get_object()
+        
+        # Buscar devices através dos assets do site
+        devices = Device.objects.filter(asset__site=site).select_related('asset')
+        
+        # Filtros opcionais
+        device_type = request.query_params.get('device_type')
+        if device_type:
+            devices = devices.filter(device_type=device_type)
+        
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            devices = devices.filter(status=status_filter)
+        
+        is_online = request.query_params.get('is_online')
+        if is_online is not None:
+            is_online_bool = is_online.lower() == 'true'
+            devices = devices.filter(is_online=is_online_bool)
+        
+        serializer = DeviceListSerializer(devices, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['get'])
     def stats(self, request, pk=None):
         """
         Retorna estatísticas do site.
