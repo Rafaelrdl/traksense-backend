@@ -276,6 +276,26 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 
+# Celery Beat Schedule - Tarefas periódicas
+CELERY_BEAT_SCHEDULE = {
+    # Verificar status online/offline dos sensores a cada 1 hora
+    'check-sensors-online-status': {
+        'task': 'assets.check_sensors_online_status',
+        'schedule': 3600.0,  # 1 hora em segundos
+        'options': {
+            'expires': 300,  # Expira em 5 minutos se não executar
+        },
+    },
+    # Atualizar status dos devices baseado nos sensores (logo após sensores)
+    'update-device-online-status': {
+        'task': 'assets.update_device_online_status',
+        'schedule': 3600.0,  # 1 hora em segundos
+        'options': {
+            'expires': 300,
+        },
+    },
+}
+
 # MinIO / S3
 MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'minio:9000')
 MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY', 'minioadmin')
