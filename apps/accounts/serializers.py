@@ -4,6 +4,7 @@ Serializers for user authentication and profile management.
 
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
+from django.db import connection
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
@@ -13,9 +14,12 @@ from apps.accounts.models import User
 class UserSerializer(serializers.ModelSerializer):
     """
     Serializer for User model with read-only and writable fields.
+    Includes role and site from TenantMembership.
     """
     full_name = serializers.CharField(read_only=True)
     initials = serializers.CharField(read_only=True)
+    role = serializers.SerializerMethodField()
+    site = serializers.SerializerMethodField()
     
     class Meta:
         model = User
@@ -35,6 +39,8 @@ class UserSerializer(serializers.ModelSerializer):
             'email_verified',
             'is_active',
             'is_staff',
+            'role',
+            'site',
             'date_joined',
             'last_login',
             'created_at',
@@ -46,11 +52,36 @@ class UserSerializer(serializers.ModelSerializer):
             'email_verified',
             'is_active',
             'is_staff',
+            'role',
+            'site',
             'date_joined',
             'last_login',
             'created_at',
             'updated_at',
         ]
+    
+    def get_role(self, obj):
+        """Get user role from TenantMembership."""
+        from apps.accounts.models import TenantMembership
+        
+        try:
+            tenant = connection.tenant
+            membership = TenantMembership.objects.filter(
+                user=obj,
+                tenant=tenant,
+                status='active'
+            ).first()
+            return membership.role if membership else 'viewer'
+        except Exception:
+            return 'viewer'
+    
+    def get_site(self, obj):
+        """Get tenant name as site."""
+        try:
+            tenant = connection.tenant
+            return tenant.name if hasattr(tenant, 'name') else 'TrakSense'
+        except Exception:
+            return 'TrakSense'
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
