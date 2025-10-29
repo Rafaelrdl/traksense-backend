@@ -63,6 +63,7 @@ TENANT_APPS = [
     # Tenant-specific apps
     'apps.ingest',  # MQTT telemetry ingestion
     'apps.assets',  # Catálogo de Ativos (Sites, Assets, Devices, Sensors)
+    'apps.alerts',  # Sistema de Alertas e Regras
 ]
 
 
@@ -292,6 +293,22 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 3600.0,  # 1 hora em segundos
         'options': {
             'expires': 300,
+        },
+    },
+    # Avaliar regras de alertas a cada 5 minutos
+    'evaluate-alert-rules': {
+        'task': 'alerts.evaluate_rules',
+        'schedule': 300.0,  # 5 minutos em segundos
+        'options': {
+            'expires': 60,  # Expira em 1 minuto se não executar
+        },
+    },
+    # Limpar alertas antigos uma vez por dia (às 2:00 AM)
+    'cleanup-old-alerts': {
+        'task': 'alerts.cleanup_old_alerts',
+        'schedule': 86400.0,  # 24 horas em segundos
+        'options': {
+            'expires': 3600,  # Expira em 1 hora se não executar
         },
     },
 }

@@ -31,4 +31,7 @@ urlpatterns = [
     
     # Telemetry API (tenant-specific data)
     path('api/telemetry/', include('apps.ingest.api_urls')),
+    
+    # Alerts & Rules API (tenant-specific data)
+    path('api/alerts/', include('apps.alerts.urls')),
 ]
