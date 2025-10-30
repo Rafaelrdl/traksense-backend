@@ -4,6 +4,80 @@
 
 ---
 
+## ⚠️ CRITICAL: File Organization Rules
+
+### 🚨 NEVER CREATE FILES IN THE ROOT DIRECTORY
+
+**ALWAYS follow these rules when creating new files:**
+
+#### 📚 Documentation Files (.md)
+❌ **NEVER** create in root: `c:\Users\Rafael Ribeiro\TrakSense\traksense-backend\`
+✅ **ALWAYS** create in: `c:\Users\Rafael Ribeiro\TrakSense\traksense-backend\docs\`
+
+**Specific locations:**
+- **Fase docs** → `docs/fases/FASE_*.md`
+- **Implementation docs** → `docs/implementacao/IMPLEMENTACAO_*.md`
+- **Guides** → `docs/guias/GUIA_*.md`
+- **EMQX docs** → `docs/emqx/EMQX_*.md`
+- **Validations** → `docs/validacoes/VALIDACAO_*.md` or `RELATORIO_*.md`
+- **Bugfixes** → `docs/bugfixes/BUGFIX_*.md` or `CORRECAO_*.md`
+- **General docs** → `docs/` (checklists, commands, etc)
+
+#### 🔧 Python Scripts (.py)
+❌ **NEVER** create in root: `c:\Users\Rafael Ribeiro\TrakSense\traksense-backend\`
+✅ **ALWAYS** create in: `c:\Users\Rafael Ribeiro\TrakSense\traksense-backend\scripts\`
+
+**Specific locations:**
+- **Test scripts** → `scripts/tests/test_*.py`
+- **Setup/Create scripts** → `scripts/setup/create_*.py`
+- **Verification scripts** → `scripts/verification/check_*.py`
+- **Maintenance scripts** → `scripts/maintenance/fix_*.py` or `cleanup_*.py`
+- **Utility scripts** → `scripts/utils/` (provision, publish, sync, debug, set, delete)
+
+#### 📋 Naming Conventions
+| Prefix | Location | Example |
+|--------|----------|---------|
+| `FASE_` | `docs/fases/` | `docs/fases/FASE_7_ANALYTICS.md` |
+| `IMPLEMENTACAO_` | `docs/implementacao/` | `docs/implementacao/IMPLEMENTACAO_ANALYTICS.md` |
+| `GUIA_` | `docs/guias/` | `docs/guias/GUIA_TESTE_ANALYTICS.md` |
+| `EMQX_` | `docs/emqx/` | `docs/emqx/EMQX_SECURITY.md` |
+| `VALIDACAO_` | `docs/validacoes/` | `docs/validacoes/VALIDACAO_ANALYTICS.md` |
+| `BUGFIX_` | `docs/bugfixes/` | `docs/bugfixes/BUGFIX_ANALYTICS_ERROR.md` |
+| `test_` | `scripts/tests/` | `scripts/tests/test_analytics.py` |
+| `create_` | `scripts/setup/` | `scripts/setup/create_analytics_data.py` |
+| `check_` | `scripts/verification/` | `scripts/verification/check_analytics.py` |
+| `fix_` | `scripts/maintenance/` | `scripts/maintenance/fix_analytics.py` |
+| `cleanup_` | `scripts/maintenance/` | `scripts/maintenance/cleanup_analytics.py` |
+
+#### ✅ Exceptions (Files allowed in root)
+ONLY these files belong in the root:
+- `README.md` (main project readme)
+- `INDEX.md` (navigation index)
+- `NAVEGACAO.md` (quick navigation guide)
+- `REORGANIZACAO.md` (reorganization documentation)
+- `manage.py` (Django management)
+- `gunicorn.conf.py` (server config)
+- `Makefile` (build commands)
+- `requirements.txt` (Python dependencies)
+- `.env`, `.env.example` (environment config)
+- `.gitignore` (git config)
+- `celerybeat-schedule` (Celery temp file)
+
+#### 🔍 Before Creating Any File
+1. **Check the naming** - Does it follow conventions?
+2. **Determine the type** - Documentation or Script?
+3. **Find the correct folder** - Use the table above
+4. **Create in the right place** - Never in root!
+
+#### 📖 Reference Files
+- **AI Instructions**: `.github/ai-instructions/` - **⭐ READ THIS FIRST!**
+- **Full index**: `INDEX.md` - Complete project navigation
+- **Docs index**: `docs/README.md` - Documentation organization
+- **Scripts index**: `scripts/README.md` - Scripts organization
+- **Reorganization**: `REORGANIZACAO.md` - Why and how we organized
+
+---
+
 ## 🏗️ Architecture Overview
 
 **Product:** B2B multi-tenant SaaS for HVAC/IoT monitoring, telemetry, alerts, and analytics.
@@ -744,6 +818,77 @@ X_FRAME_OPTIONS = 'DENY'
 
 ---
 
+## 🎯 File Creation Examples (AI Reference)
+
+### Example 1: Creating Phase Documentation
+```
+❌ WRONG: create_file("FASE_7_ANALYTICS.md", ...)
+✅ CORRECT: create_file("docs/fases/FASE_7_ANALYTICS.md", ...)
+```
+
+### Example 2: Creating Implementation Doc
+```
+❌ WRONG: create_file("IMPLEMENTACAO_DASHBOARD.md", ...)
+✅ CORRECT: create_file("docs/implementacao/IMPLEMENTACAO_DASHBOARD.md", ...)
+```
+
+### Example 3: Creating Test Script
+```
+❌ WRONG: create_file("test_analytics.py", ...)
+✅ CORRECT: create_file("scripts/tests/test_analytics.py", ...)
+```
+
+### Example 4: Creating Setup Script
+```
+❌ WRONG: create_file("create_analytics_data.py", ...)
+✅ CORRECT: create_file("scripts/setup/create_analytics_data.py", ...)
+```
+
+### Example 5: Creating Guide
+```
+❌ WRONG: create_file("GUIA_ANALYTICS.md", ...)
+✅ CORRECT: create_file("docs/guias/GUIA_ANALYTICS.md", ...)
+```
+
+### Example 6: Creating Bugfix Doc
+```
+❌ WRONG: create_file("BUGFIX_DASHBOARD_ERROR.md", ...)
+✅ CORRECT: create_file("docs/bugfixes/BUGFIX_DASHBOARD_ERROR.md", ...)
+```
+
+### Decision Tree for File Placement
+
+```
+Is it a .md file?
+├─ Yes → Is it documentation?
+│  ├─ Yes → Check prefix:
+│  │  ├─ FASE_* → docs/fases/
+│  │  ├─ IMPLEMENTACAO_* → docs/implementacao/
+│  │  ├─ GUIA_* → docs/guias/
+│  │  ├─ EMQX_* → docs/emqx/
+│  │  ├─ VALIDACAO_* or RELATORIO_* → docs/validacoes/
+│  │  ├─ BUGFIX_* or CORRECAO_* → docs/bugfixes/
+│  │  └─ Other → docs/
+│  └─ No → Is it README.md or INDEX.md?
+│     ├─ Yes → Root is OK
+│     └─ No → Ask for clarification
+│
+└─ No → Is it a .py file?
+   ├─ Yes → Check prefix:
+   │  ├─ test_* → scripts/tests/
+   │  ├─ create_* → scripts/setup/
+   │  ├─ check_* → scripts/verification/
+   │  ├─ fix_* or cleanup_* → scripts/maintenance/
+   │  ├─ provision_*, publish_*, sync_*, debug_*, set_*, delete_*, verify_* → scripts/utils/
+   │  └─ No prefix → Ask for purpose, then place appropriately
+   │
+   └─ No → Is it config file (manage.py, Makefile, requirements.txt, .env)?
+      ├─ Yes → Root is OK
+      └─ No → Ask for clarification
+```
+
+---
+
 ## 📖 Additional Resources
 
 - **Django Tenants Docs:** https://django-tenants.readthedocs.io
@@ -752,8 +897,15 @@ X_FRAME_OPTIONS = 'DENY'
 - **DRF Spectacular:** https://drf-spectacular.readthedocs.io
 - **Celery Docs:** https://docs.celeryq.dev
 
+**Project Organization:**
+- **Navigation Index:** `INDEX.md` - Complete project guide
+- **Documentation Index:** `docs/README.md` - All documentation organized
+- **Scripts Index:** `scripts/README.md` - All scripts organized
+- **Reorganization Doc:** `REORGANIZACAO.md` - Why files are organized this way
+
 ---
 
-**Last Updated:** 2025
+**Last Updated:** 30 de outubro de 2025
 **Django Version:** 5.0
 **Python Version:** 3.11+
+**File Organization:** Strictly enforced - see top of document

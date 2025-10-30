@@ -71,6 +71,25 @@ python scripts/setup/create_tenant_umc_localhost.py
 python scripts/setup/create_demo_team.py
 ```
 
+## 🤖 Para Assistentes de IA
+
+**⚠️ LEIA ANTES DE CRIAR QUALQUER ARQUIVO:**
+
+Consulte a pasta **`.github/ai-instructions/`** que contém:
+
+1. **`.copilot-rules`** ⭐ - COMECE AQUI (regras rápidas)
+2. **`AI_FILE_ORGANIZATION_WARNING.md`** - Guia visual detalhado
+3. **`QUICK_REFERENCE.md`** - Tabela de consulta rápida
+4. **`README.md`** - Visão geral e workflow
+
+**Também consulte:**
+- **`.github/copilot-instructions.md`** - Instruções completas (seção no topo)
+- **`.github/FILE_TEMPLATES.md`** - Templates para novos arquivos
+
+**Regra Principal:** NUNCA crie arquivos .md ou .py na raiz. Use `docs/` ou `scripts/`.
+
+---
+
 ## 📖 Documentação por Tópico
 
 ### 🔐 Autenticação e Autorização

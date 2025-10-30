@@ -1,0 +1,39 @@
+# GitHub Copilot Rules - TrakSense Backend
+
+## 🚨 CRITICAL: Never Create Files in Root Directory
+
+### Documentation Files (.md)
+- ❌ DO NOT create in: `c:\Users\Rafael Ribeiro\TrakSense\traksense-backend\`
+- ✅ ALWAYS create in: `c:\Users\Rafael Ribeiro\TrakSense\traksense-backend\docs\`
+- See `docs/README.md` for structure
+
+### Python Scripts (.py)
+- ❌ DO NOT create in: `c:\Users\Rafael Ribeiro\TrakSense\traksense-backend\`
+- ✅ ALWAYS create in: `c:\Users\Rafael Ribeiro\TrakSense\traksense-backend\scripts\`
+- See `scripts/README.md` for structure
+
+### File Naming = File Location
+- `FASE_*.md` → `docs/fases/`
+- `IMPLEMENTACAO_*.md` → `docs/implementacao/`
+- `GUIA_*.md` → `docs/guias/`
+- `test_*.py` → `scripts/tests/`
+- `create_*.py` → `scripts/setup/`
+- `check_*.py` → `scripts/verification/`
+
+### Before Creating ANY File
+1. Check the file name prefix
+2. Consult the naming convention table
+3. Create in the CORRECT subfolder
+4. NEVER assume root is correct
+
+### Root Directory Whitelist
+ONLY these files belong in root:
+- README.md, INDEX.md, NAVEGACAO.md, REORGANIZACAO.md
+- manage.py, Makefile, requirements.txt
+- .env, .env.example, .gitignore
+- gunicorn.conf.py, celerybeat-schedule
+
+### References
+- Full guide: `.github/copilot-instructions.md`
+- Complete index: `INDEX.md`
+- Reorganization doc: `REORGANIZACAO.md`

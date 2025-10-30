@@ -1,5 +1,7 @@
 # Scripts - TrakSense Backend
 
+> **🤖 AI ASSISTANTS:** When creating Python scripts (.py), ALWAYS place them in the appropriate subfolder within `scripts/`, NEVER in the project root. See the structure below and follow the naming conventions.
+
 Diretório organizado contendo todos os scripts utilitários do projeto.
 
 ## 📁 Estrutura de Pastas

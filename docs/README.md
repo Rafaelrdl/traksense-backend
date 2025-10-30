@@ -1,5 +1,7 @@
 # Documentação - TrakSense Backend
 
+> **🤖 AI ASSISTANTS:** When creating documentation files (.md), ALWAYS place them in the appropriate subfolder within `docs/`, NEVER in the project root. See the structure below and follow the naming conventions.
+
 Diretório organizado contendo toda a documentação do projeto.
 
 ## 📁 Estrutura de Pastas
