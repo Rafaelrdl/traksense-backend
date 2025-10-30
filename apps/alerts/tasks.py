@@ -109,10 +109,10 @@ def evaluate_single_rule(rule):
         Alert instance if condition is met and alert was created, None otherwise
     """
     from apps.alerts.models import Alert
-    from apps.ingest.models import TelemetryReading
+    from apps.ingest.models import Reading
     
     # Check cooldown - don't create multiple alerts too quickly
-    cooldown_period = timedelta(minutes=rule.cooldown_minutes)
+    cooldown_period = timedelta(minutes=rule.duration)  # Usar 'duration' em vez de cooldown_minutes
     last_alert = Alert.objects.filter(
         rule=rule,
         triggered_at__gte=timezone.now() - cooldown_period
@@ -126,11 +126,14 @@ def evaluate_single_rule(rule):
         return None
     
     # Get latest telemetry reading for this equipment
+    # Regras usam parameter_key que corresponde ao sensor_id nas readings
     try:
-        latest_reading = TelemetryReading.objects.filter(
-            asset_tag=rule.equipment.asset_tag,
-            parameter_key=rule.parameter_key
-        ).order_by('-timestamp').first()
+        # Buscar reading pelo sensor_id (parameter_key da regra)
+        # e device_id (asset_tag do equipment)
+        latest_reading = Reading.objects.filter(
+            device_id=rule.equipment.asset_tag,
+            sensor_id=rule.parameter_key
+        ).order_by('-ts').first()
         
         if not latest_reading:
             logger.debug(
@@ -140,10 +143,10 @@ def evaluate_single_rule(rule):
             return None
         
         # Check if reading is recent enough (within last 15 minutes)
-        if latest_reading.timestamp < timezone.now() - timedelta(minutes=15):
+        if latest_reading.ts < timezone.now() - timedelta(minutes=15):
             logger.debug(
                 f"Latest telemetry reading is too old "
-                f"({latest_reading.timestamp}) for rule {rule.id}"
+                f"({latest_reading.ts}) for rule {rule.id}"
             )
             return None
         
@@ -178,7 +181,7 @@ def evaluate_single_rule(rule):
                 'value': value,
                 'threshold': rule.threshold,
                 'operator': rule.operator,
-                'timestamp': latest_reading.timestamp.isoformat(),
+                'timestamp': latest_reading.ts.isoformat(),
             }
         )
         
