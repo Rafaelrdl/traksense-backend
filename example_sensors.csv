@@ -1,9 +1,0 @@
-sensor_tag,asset_tag,metric_type,unit,mqtt_client_id
-CH-001-TEMP-SUPPLY,CH-001,temp_supply,°C,GW-CH-001
-CH-001-TEMP-RETURN,CH-001,temp_return,°C,GW-CH-001
-CH-001-POWER-KW,CH-001,power_kw,kW,GW-CH-001
-CH-001-CURRENT-A,CH-001,current,A,GW-CH-001
-AHU-001-TEMP-SUPPLY,AHU-001,temp_supply,°C,GW-AHU-001
-AHU-001-TEMP-RETURN,AHU-001,temp_return,°C,GW-AHU-001
-AHU-001-HUMIDITY,AHU-001,humidity,%,GW-AHU-001
-AHU-001-RPM-FAN,AHU-001,rpm_fan,RPM,GW-AHU-001

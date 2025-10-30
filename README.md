@@ -129,12 +129,30 @@ traksense-backend/
 │   ├── api/Dockerfile
 │   ├── nginx/nginx.conf
 │   └── scripts/
+├── docs/                 # 📚 Documentação organizada (37 arquivos)
+│   ├── fases/           # Documentação de fases do projeto
+│   ├── implementacao/   # Detalhes técnicos de implementação
+│   ├── guias/           # Guias práticos e tutoriais
+│   ├── emqx/            # Documentação EMQX/MQTT
+│   ├── validacoes/      # Validações e relatórios
+│   ├── bugfixes/        # Correções documentadas
+│   └── README.md        # Índice de documentação
+├── scripts/             # 🔧 Scripts utilitários (63 arquivos)
+│   ├── tests/          # Scripts de teste (29)
+│   ├── setup/          # Scripts de configuração (12)
+│   ├── verification/   # Scripts de verificação (9)
+│   ├── utils/          # Scripts diversos (9)
+│   ├── maintenance/    # Scripts de manutenção (4)
+│   └── README.md       # Índice de scripts
 ├── .env.example
 ├── requirements.txt
 ├── manage.py
 ├── Makefile
+├── INDEX.md            # 📖 Índice geral de navegação
 └── README.md
 ```
+
+> **📖 Navegação**: Consulte o [INDEX.md](INDEX.md) para um guia completo de toda a documentação e scripts organizados.
 
 ## 🔧 Desenvolvimento
 

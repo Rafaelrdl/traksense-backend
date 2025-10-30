@@ -1,0 +1,41 @@
+# Scripts - Arquivos de log e cache
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Ambiente virtual (se criado dentro de scripts)
+venv/
+env/
+ENV/
+
+# Arquivos de teste temporários
+*.log
+*.tmp
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Outputs de teste
+test_output/
+test_results/
+*.json.bak
+*.csv.bak
+
+# Arquivos de configuração local
+local_config.py
+.env.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
