@@ -195,17 +195,24 @@ This folder is part of a **7-layer protection system**:
 
 **First time in this project?**
 
-1. Read `.copilot-rules` (2 minutes)
-2. Read `AI_FILE_ORGANIZATION_WARNING.md` (5 minutes)
-3. Bookmark `QUICK_REFERENCE.md` for future lookups
-4. Consult templates in `../FILE_TEMPLATES.md` when creating files
+1. ⭐ **YOU ARE HERE** - This README explains everything
+2. Read `.copilot-rules` (2 minutes) - Quick rules
+3. Read `AI_FILE_ORGANIZATION_WARNING.md` (5 minutes) - Detailed guide
+4. Bookmark `QUICK_REFERENCE.md` for future lookups
+5. Consult templates in `../FILE_TEMPLATES.md` when creating files
 
 **Creating a file now?**
 
 1. What's the prefix? (FASE_, test_, etc)
 2. Look it up in `QUICK_REFERENCE.md`
-3. Use the full path
+3. Use the full path (docs/fases/... or scripts/tests/...)
 4. Done!
+
+**Need more context?**
+
+- Full project index: `../../INDEX.md`
+- Complete Copilot guide: `../copilot-instructions.md`
+- How the protection works: `../../docs/FILE_PROTECTION_SYSTEM.md`
 
 ---
 
