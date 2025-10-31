@@ -323,6 +323,7 @@ class SensorSerializer(serializers.ModelSerializer):
     
     device_name = serializers.CharField(source='device.name', read_only=True)
     device_serial = serializers.CharField(source='device.serial_number', read_only=True)
+    device_mqtt_client_id = serializers.CharField(source='device.mqtt_client_id', read_only=True)
     asset_tag = serializers.CharField(source='device.asset.tag', read_only=True)
     asset_name = serializers.CharField(source='device.asset.name', read_only=True)
     site_name = serializers.CharField(source='device.asset.site.name', read_only=True)
@@ -336,6 +337,7 @@ class SensorSerializer(serializers.ModelSerializer):
             'device',
             'device_name',
             'device_serial',
+            'device_mqtt_client_id',
             'asset_tag',
             'asset_name',
             'site_name',
@@ -350,7 +352,7 @@ class SensorSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = [
-            'id', 'device_name', 'device_serial', 'asset_tag', 'asset_name',
+            'id', 'device_name', 'device_serial', 'device_mqtt_client_id', 'asset_tag', 'asset_name',
             'site_name', 'is_online', 'last_reading_at', 'availability',
             'created_at', 'updated_at'
         ]
