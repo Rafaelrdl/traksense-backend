@@ -101,6 +101,7 @@ def evaluate_rules_task():
 def evaluate_single_rule(rule):
     """
     Evaluate a single rule against current telemetry data.
+    Suporta tanto regras com múltiplos parâmetros quanto regras antigas (formato único).
     
     Args:
         rule: Rule model instance
@@ -111,8 +112,128 @@ def evaluate_single_rule(rule):
     from apps.alerts.models import Alert
     from apps.ingest.models import Reading
     
-    # Check cooldown - don't create multiple alerts too quickly
-    cooldown_period = timedelta(minutes=rule.duration)  # Usar 'duration' em vez de cooldown_minutes
+    # Verificar se a regra tem parâmetros novos (múltiplos) ou usa formato antigo
+    parameters = rule.parameters.all()
+    
+    # Se não tem parâmetros novos mas tem campos antigos, avaliar no formato antigo
+    if not parameters.exists() and rule.parameter_key:
+        return evaluate_single_rule_legacy(rule)
+    
+    # Avaliar cada parâmetro da regra
+    alerts_created = []
+    
+    for param in parameters:
+        # Check cooldown por parâmetro
+        cooldown_period = timedelta(minutes=param.duration)
+        last_alert = Alert.objects.filter(
+            rule=rule,
+            parameter_key=param.parameter_key,
+            triggered_at__gte=timezone.now() - cooldown_period
+        ).first()
+        
+        if last_alert:
+            logger.debug(
+                f"Rule {rule.id} parameter {param.parameter_key} is in cooldown period "
+                f"(last alert at {last_alert.triggered_at})"
+            )
+            continue
+    
+        # Buscar reading pelo sensor_id (parameter_key do parâmetro)
+        try:
+            latest_reading = Reading.objects.filter(
+                device_id=rule.equipment.asset_tag,
+                sensor_id=param.parameter_key
+            ).order_by('-ts').first()
+            
+            if not latest_reading:
+                logger.debug(
+                    f"No telemetry data found for equipment {rule.equipment.asset_tag} "
+                    f"parameter {param.parameter_key}"
+                )
+                continue
+            
+            # Check if reading is recent enough (within last 15 minutes)
+            if latest_reading.ts < timezone.now() - timedelta(minutes=15):
+                logger.debug(
+                    f"Latest telemetry reading is too old "
+                    f"({latest_reading.ts}) for rule {rule.id} param {param.parameter_key}"
+                )
+                continue
+            
+            # Get the value to compare
+            value = latest_reading.value
+            
+            # Evaluate the condition
+            condition_met = evaluate_condition(
+                value,
+                param.operator,
+                param.threshold
+            )
+            
+            if not condition_met:
+                logger.debug(
+                    f"Rule {rule.id} parameter {param.parameter_key} condition not met: "
+                    f"{value} {param.operator} {param.threshold} = False"
+                )
+                continue
+            
+            # Condition is met - create alert
+            # Gerar mensagem a partir do template
+            message = generate_alert_message_from_template(
+                param.message_template,
+                param,
+                latest_reading,
+                value
+            )
+            
+            alert = Alert.objects.create(
+                rule=rule,
+                asset_tag=rule.equipment.asset_tag,
+                equipment_name=rule.equipment.name,
+                severity=param.severity,
+                parameter_key=param.parameter_key,
+                parameter_value=value,
+                threshold=param.threshold,
+                message=message,
+                triggered_at=timezone.now(),
+                raw_data={
+                    'parameter_key': param.parameter_key,
+                    'variable_key': param.variable_key,
+                    'value': value,
+                    'threshold': param.threshold,
+                    'operator': param.operator,
+                    'unit': param.unit,
+                    'timestamp': latest_reading.ts.isoformat(),
+                }
+            )
+            
+            logger.info(
+                f"Alert {alert.id} created for rule {rule.id} parameter {param.parameter_key}: "
+                f"{value} {param.operator} {param.threshold}"
+            )
+            
+            alerts_created.append(alert)
+            
+        except Exception as e:
+            logger.error(
+                f"Error evaluating rule {rule.id} parameter {param.parameter_key}: {str(e)}"
+            )
+            continue
+    
+    # Retornar o primeiro alerta criado (ou None se nenhum foi criado)
+    return alerts_created[0] if alerts_created else None
+
+
+def evaluate_single_rule_legacy(rule):
+    """
+    Evaluate a single rule in the old format (single parameter).
+    Mantido para compatibilidade com regras antigas.
+    """
+    from apps.alerts.models import Alert
+    from apps.ingest.models import Reading
+    
+    # Check cooldown
+    cooldown_period = timedelta(minutes=rule.duration)
     last_alert = Alert.objects.filter(
         rule=rule,
         triggered_at__gte=timezone.now() - cooldown_period
@@ -120,16 +241,11 @@ def evaluate_single_rule(rule):
     
     if last_alert:
         logger.debug(
-            f"Rule {rule.id} is in cooldown period "
-            f"(last alert at {last_alert.triggered_at})"
+            f"Rule {rule.id} is in cooldown period (last alert at {last_alert.triggered_at})"
         )
         return None
     
-    # Get latest telemetry reading for this equipment
-    # Regras usam parameter_key que corresponde ao sensor_id nas readings
     try:
-        # Buscar reading pelo sensor_id (parameter_key da regra)
-        # e device_id (asset_tag do equipment)
         latest_reading = Reading.objects.filter(
             device_id=rule.equipment.asset_tag,
             sensor_id=rule.parameter_key
@@ -142,37 +258,30 @@ def evaluate_single_rule(rule):
             )
             return None
         
-        # Check if reading is recent enough (within last 15 minutes)
         if latest_reading.ts < timezone.now() - timedelta(minutes=15):
             logger.debug(
-                f"Latest telemetry reading is too old "
-                f"({latest_reading.ts}) for rule {rule.id}"
+                f"Latest telemetry reading is too old ({latest_reading.ts}) for rule {rule.id}"
             )
             return None
         
-        # Get the value to compare
         value = latest_reading.value
         
-        # Evaluate the condition
-        condition_met = evaluate_condition(
-            value,
-            rule.operator,
-            rule.threshold
-        )
+        condition_met = evaluate_condition(value, rule.operator, rule.threshold)
         
         if not condition_met:
             logger.debug(
-                f"Rule {rule.id} condition not met: "
-                f"{value} {rule.operator} {rule.threshold} = False"
+                f"Rule {rule.id} condition not met: {value} {rule.operator} {rule.threshold} = False"
             )
             return None
         
-        # Condition is met - create alert
         alert = Alert.objects.create(
             rule=rule,
             asset_tag=rule.equipment.asset_tag,
             equipment_name=rule.equipment.name,
             severity=rule.severity,
+            parameter_key=rule.parameter_key,
+            parameter_value=value,
+            threshold=rule.threshold,
             message=generate_alert_message(rule, latest_reading, value),
             triggered_at=timezone.now(),
             raw_data={
@@ -186,16 +295,14 @@ def evaluate_single_rule(rule):
         )
         
         logger.info(
-            f"Alert {alert.id} created for rule {rule.id}: "
-            f"{value} {rule.operator} {rule.threshold}"
+            f"Alert {alert.id} created for rule {rule.id}: {value} {rule.operator} {rule.threshold}"
         )
         
         return alert
         
     except Exception as e:
         logger.error(
-            f"Error evaluating rule {rule.id} for equipment "
-            f"{rule.equipment.asset_tag}: {str(e)}"
+            f"Error evaluating rule {rule.id} for equipment {rule.equipment.asset_tag}: {str(e)}"
         )
         return None
 
@@ -238,9 +345,48 @@ def evaluate_condition(value, operator, threshold):
         return False
 
 
+def generate_alert_message_from_template(template, param, reading, value):
+    """
+    Generate alert message from template with variable substitution.
+    
+    Args:
+        template: Message template string with {variables}
+        param: RuleParameter instance
+        reading: Reading instance
+        value: Current value that triggered the alert
+    
+    Returns:
+        Alert message string with variables replaced
+    """
+    try:
+        # Mapeamento de operadores para texto
+        operator_map = {
+            '>': 'maior que',
+            '>=': 'maior ou igual a',
+            '<': 'menor que',
+            '<=': 'menor ou igual a',
+            '==': 'igual a',
+            '!=': 'diferente de',
+        }
+        
+        # Substituir variáveis no template
+        message = template
+        message = message.replace('{sensor}', param.parameter_key)
+        message = message.replace('{value}', str(value))
+        message = message.replace('{threshold}', str(param.threshold))
+        message = message.replace('{operator}', operator_map.get(param.operator, param.operator))
+        message = message.replace('{unit}', param.unit or '')
+        
+        return message
+        
+    except Exception as e:
+        logger.error(f"Error generating alert message from template: {str(e)}")
+        return f"Alerta disparado para parâmetro {param.parameter_key}"
+
+
 def generate_alert_message(rule, reading, value):
     """
-    Generate a human-readable alert message.
+    Generate a human-readable alert message (legacy format).
     
     Args:
         rule: Rule model instance
