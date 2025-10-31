@@ -31,58 +31,70 @@ def evaluate_rules_task():
     """
     from apps.alerts.models import Rule
     from apps.alerts.services import NotificationService
+    from apps.tenants.models import Tenant
+    from django_tenants.utils import schema_context
     
     logger.info("Starting rule evaluation task...")
-    
-    # Get all enabled rules
-    rules = Rule.objects.filter(enabled=True).select_related('equipment')
-    
-    if not rules.exists():
-        logger.info("No enabled rules found")
-        return {
-            'evaluated': 0,
-            'triggered': 0,
-            'errors': 0
-        }
     
     evaluated_count = 0
     triggered_count = 0
     error_count = 0
     
-    notification_service = NotificationService()
+    # Processar cada tenant
+    tenants = Tenant.objects.exclude(slug='public').all()
     
-    for rule in rules:
+    for tenant in tenants:
         try:
-            evaluated_count += 1
-            
-            # Evaluate the rule
-            alert = evaluate_single_rule(rule)
-            
-            if alert:
-                triggered_count += 1
-                logger.info(
-                    f"Alert {alert.id} triggered for rule {rule.id} "
-                    f"({rule.name}) on equipment {rule.equipment.asset_tag}"
-                )
+            with schema_context(tenant.slug):
+                # Get all enabled rules for this tenant
+                rules = Rule.objects.filter(enabled=True).select_related('equipment')
                 
-                # Send notifications
-                try:
-                    results = notification_service.send_alert_notifications(alert)
-                    logger.info(
-                        f"Notifications sent for alert {alert.id}: "
-                        f"{len(results['sent'])} sent, "
-                        f"{len(results['failed'])} failed, "
-                        f"{len(results['skipped'])} skipped"
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to send notifications for alert {alert.id}: {str(e)}"
-                    )
-                    error_count += 1
-                    
+                if not rules.exists():
+                    logger.debug(f"No enabled rules found for tenant {tenant.slug}")
+                    continue
+                
+                logger.info(f"Evaluating {rules.count()} rules for tenant {tenant.slug}")
+                
+                notification_service = NotificationService()
+                
+                for rule in rules:
+                    try:
+                        evaluated_count += 1
+                        
+                        # Evaluate the rule
+                        alert = evaluate_single_rule(rule)
+                        
+                        if alert:
+                            triggered_count += 1
+                            logger.info(
+                                f"Alert {alert.id} triggered for rule {rule.id} "
+                                f"({rule.name}) on equipment {rule.equipment.tag} "
+                                f"in tenant {tenant.slug}"
+                            )
+                            
+                            # Send notifications
+                            try:
+                                results = notification_service.send_alert_notifications(alert)
+                                logger.info(
+                                    f"Notifications sent for alert {alert.id}: "
+                                    f"{len(results['sent'])} sent, "
+                                    f"{len(results['failed'])} failed, "
+                                    f"{len(results['skipped'])} skipped"
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to send notifications for alert {alert.id}: {str(e)}"
+                                )
+                                error_count += 1
+                                
+                    except Exception as e:
+                        logger.error(f"Error evaluating rule {rule.id} in tenant {tenant.slug}: {str(e)}")
+                        error_count += 1
+                        
         except Exception as e:
-            logger.error(f"Error evaluating rule {rule.id}: {str(e)}")
+            logger.error(f"Error processing tenant {tenant.slug}: {str(e)}")
             error_count += 1
+            continue
     
     logger.info(
         f"Rule evaluation completed: "
@@ -139,15 +151,44 @@ def evaluate_single_rule(rule):
             continue
     
         # Buscar reading pelo sensor_id (parameter_key do parâmetro)
+        # parameter_key pode ser "sensor_15" (ID do banco) ou o sensor.tag direto
         try:
+            # Tentar interpretar como ID de sensor no banco (formato: sensor_XX)
+            sensor_tag = param.parameter_key
+            if param.parameter_key.startswith('sensor_'):
+                from apps.assets.models import Sensor
+                try:
+                    sensor_id = int(param.parameter_key.replace('sensor_', ''))
+                    sensor = Sensor.objects.filter(pk=sensor_id).first()
+                    if sensor:
+                        sensor_tag = sensor.tag
+                    else:
+                        logger.warning(
+                            f"Sensor ID {sensor_id} not found for parameter_key {param.parameter_key}"
+                        )
+                        continue
+                except (ValueError, Sensor.DoesNotExist):
+                    logger.warning(
+                        f"Could not parse sensor ID from parameter_key: {param.parameter_key}"
+                    )
+                    continue
+            
+            # Buscar o device do equipment para pegar o mqtt_client_id correto
+            device = rule.equipment.devices.first()
+            if not device:
+                logger.warning(
+                    f"No device found for equipment {rule.equipment.tag}"
+                )
+                continue
+            
             latest_reading = Reading.objects.filter(
-                device_id=rule.equipment.asset_tag,
-                sensor_id=param.parameter_key
+                device_id=device.mqtt_client_id,
+                sensor_id=sensor_tag
             ).order_by('-ts').first()
             
             if not latest_reading:
                 logger.debug(
-                    f"No telemetry data found for equipment {rule.equipment.asset_tag} "
+                    f"No telemetry data found for equipment {rule.equipment.tag} "
                     f"parameter {param.parameter_key}"
                 )
                 continue
@@ -188,23 +229,12 @@ def evaluate_single_rule(rule):
             
             alert = Alert.objects.create(
                 rule=rule,
-                asset_tag=rule.equipment.asset_tag,
-                equipment_name=rule.equipment.name,
+                asset_tag=rule.equipment.tag,
                 severity=param.severity,
                 parameter_key=param.parameter_key,
                 parameter_value=value,
                 threshold=param.threshold,
-                message=message,
-                triggered_at=timezone.now(),
-                raw_data={
-                    'parameter_key': param.parameter_key,
-                    'variable_key': param.variable_key,
-                    'value': value,
-                    'threshold': param.threshold,
-                    'operator': param.operator,
-                    'unit': param.unit,
-                    'timestamp': latest_reading.ts.isoformat(),
-                }
+                message=message
             )
             
             logger.info(
@@ -247,13 +277,13 @@ def evaluate_single_rule_legacy(rule):
     
     try:
         latest_reading = Reading.objects.filter(
-            device_id=rule.equipment.asset_tag,
+            device_id=rule.equipment.tag,
             sensor_id=rule.parameter_key
         ).order_by('-ts').first()
         
         if not latest_reading:
             logger.debug(
-                f"No telemetry data found for equipment {rule.equipment.asset_tag} "
+                f"No telemetry data found for equipment {rule.equipment.tag} "
                 f"parameter {rule.parameter_key}"
             )
             return None
@@ -276,22 +306,12 @@ def evaluate_single_rule_legacy(rule):
         
         alert = Alert.objects.create(
             rule=rule,
-            asset_tag=rule.equipment.asset_tag,
-            equipment_name=rule.equipment.name,
+            asset_tag=rule.equipment.tag,
             severity=rule.severity,
             parameter_key=rule.parameter_key,
             parameter_value=value,
             threshold=rule.threshold,
-            message=generate_alert_message(rule, latest_reading, value),
-            triggered_at=timezone.now(),
-            raw_data={
-                'parameter_key': rule.parameter_key,
-                'variable_key': rule.variable_key,
-                'value': value,
-                'threshold': rule.threshold,
-                'operator': rule.operator,
-                'timestamp': latest_reading.ts.isoformat(),
-            }
+            message=generate_alert_message(rule, latest_reading, value)
         )
         
         logger.info(
@@ -302,7 +322,7 @@ def evaluate_single_rule_legacy(rule):
         
     except Exception as e:
         logger.error(
-            f"Error evaluating rule {rule.id} for equipment {rule.equipment.asset_tag}: {str(e)}"
+            f"Error evaluating rule {rule.id} for equipment {rule.equipment.tag}: {str(e)}"
         )
         return None
 
@@ -403,7 +423,7 @@ def generate_alert_message(rule, reading, value):
         message = (
             f"{rule.parameter_key} value of {value}{unit} "
             f"is {rule.operator} threshold of {rule.threshold}{unit} "
-            f"on equipment {rule.equipment.name} ({rule.equipment.asset_tag})"
+            f"on equipment {rule.equipment.name} ({rule.equipment.tag})"
         )
         
         return message
