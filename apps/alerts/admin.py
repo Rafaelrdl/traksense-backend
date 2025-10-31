@@ -2,26 +2,24 @@
 Admin para o sistema de Alertas e Regras
 """
 from django.contrib import admin
-from .models import Rule, Alert, NotificationPreference
-# TEMPORARIAMENTE COMENTADO: from .models import RuleParameter
+from .models import Rule, RuleParameter, Alert, NotificationPreference
 
 
-# TEMPORARIAMENTE COMENTADO até migration ser aplicada
-# class RuleParameterInline(admin.TabularInline):
-#     """Inline para editar parâmetros da regra"""
-#     model = RuleParameter
-#     extra = 1
-#     fields = ['parameter_key', 'variable_key', 'operator', 'threshold', 'unit', 'duration', 'severity', 'message_template', 'order']
-#     ordering = ['order']
+class RuleParameterInline(admin.TabularInline):
+    """Inline para editar parâmetros da regra"""
+    model = RuleParameter
+    extra = 1
+    fields = ['parameter_key', 'variable_key', 'operator', 'threshold', 'unit', 'duration', 'severity', 'message_template', 'order']
+    ordering = ['order']
 
 
 @admin.register(Rule)
 class RuleAdmin(admin.ModelAdmin):
-    list_display = ['name', 'equipment', 'enabled', 'created_at']  # Removido parameters_count temporariamente
+    list_display = ['name', 'equipment', 'enabled', 'parameters_count', 'created_at']
     list_filter = ['enabled', 'created_at']
     search_fields = ['name', 'description', 'equipment__name', 'equipment__tag']
     readonly_fields = ['created_at', 'updated_at', 'created_by']
-    # TEMPORARIAMENTE COMENTADO: inlines = [RuleParameterInline]
+    inlines = [RuleParameterInline]
     
     fieldsets = (
         ('Identificação', {
@@ -47,22 +45,20 @@ class RuleAdmin(admin.ModelAdmin):
         }),
     )
     
-    # TEMPORARIAMENTE COMENTADO até migration ser aplicada
-    # def parameters_count(self, obj):
-    #     """Mostra quantidade de parâmetros"""
-    #     count = obj.parameters.count()
-    #     return f"{count} parâmetro(s)"
-    # parameters_count.short_description = 'Parâmetros'
+    def parameters_count(self, obj):
+        """Mostra quantidade de parâmetros"""
+        count = obj.parameters.count()
+        return f"{count} parâmetro(s)"
+    parameters_count.short_description = 'Parâmetros'
 
 
-# TEMPORARIAMENTE COMENTADO até migration ser aplicada
-# @admin.register(RuleParameter)
-# class RuleParameterAdmin(admin.ModelAdmin):
-#     list_display = ['rule', 'parameter_key', 'operator', 'threshold', 'severity', 'order']
-#     list_filter = ['severity', 'operator']
-#     search_fields = ['rule__name', 'parameter_key', 'variable_key']
-#     list_select_related = ['rule']
-#     ordering = ['rule', 'order']
+@admin.register(RuleParameter)
+class RuleParameterAdmin(admin.ModelAdmin):
+    list_display = ['rule', 'parameter_key', 'operator', 'threshold', 'severity', 'order']
+    list_filter = ['severity', 'operator']
+    search_fields = ['rule__name', 'parameter_key', 'variable_key']
+    list_select_related = ['rule']
+    ordering = ['rule', 'order']
 
 
 @admin.register(Alert)

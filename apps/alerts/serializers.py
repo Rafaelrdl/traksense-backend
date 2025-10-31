@@ -3,49 +3,47 @@ Serializers para o sistema de Alertas e Regras
 """
 from rest_framework import serializers
 from django.utils import timezone
-from .models import Rule, Alert, NotificationPreference
-# TEMPORARIAMENTE COMENTADO: from .models import RuleParameter
+from .models import Rule, RuleParameter, Alert, NotificationPreference
 
 
-# TEMPORARIAMENTE COMENTADO até migration ser aplicada
-# class RuleParameterSerializer(serializers.ModelSerializer):
-#     """Serializer para RuleParameter"""
-#     
-#     class Meta:
-#         model = RuleParameter
-#         fields = [
-#             'id',
-#             'parameter_key',
-#             'variable_key',
-#             'operator',
-#             'threshold',
-#             'unit',
-#             'duration',
-#             'severity',
-#             'message_template',
-#             'order',
-#         ]
-#         read_only_fields = ['id']
-#         # Tornar alguns campos opcionais para evitar erros
-#         extra_kwargs = {
-#             'variable_key': {'required': False, 'allow_blank': True},
-#             'unit': {'required': False, 'allow_blank': True},
-#             'order': {'required': False, 'default': 0},
-#         }
-#     
-#     def validate_duration(self, value):
-#         """Valida que duration seja positivo"""
-#         if value is not None and value <= 0:
-#             raise serializers.ValidationError("Duração deve ser maior que zero.")
-#         return value
-#     
-#     def validate_threshold(self, value):
-#         """Valida que threshold seja um número válido"""
-#         if value is None:
-#             raise serializers.ValidationError("Valor limite é obrigatório.")
-#         if not isinstance(value, (int, float)):
-#             raise serializers.ValidationError("Valor limite deve ser um número.")
-#         return value
+class RuleParameterSerializer(serializers.ModelSerializer):
+    """Serializer para RuleParameter"""
+    
+    class Meta:
+        model = RuleParameter
+        fields = [
+            'id',
+            'parameter_key',
+            'variable_key',
+            'operator',
+            'threshold',
+            'unit',
+            'duration',
+            'severity',
+            'message_template',
+            'order',
+        ]
+        read_only_fields = ['id']
+        # Tornar alguns campos opcionais para evitar erros
+        extra_kwargs = {
+            'variable_key': {'required': False, 'allow_blank': True},
+            'unit': {'required': False, 'allow_blank': True},
+            'order': {'required': False, 'default': 0},
+        }
+    
+    def validate_duration(self, value):
+        """Valida que duration seja positivo"""
+        if value is not None and value <= 0:
+            raise serializers.ValidationError("Duração deve ser maior que zero.")
+        return value
+    
+    def validate_threshold(self, value):
+        """Valida que threshold seja um número válido"""
+        if value is None:
+            raise serializers.ValidationError("Valor limite é obrigatório.")
+        if not isinstance(value, (int, float)):
+            raise serializers.ValidationError("Valor limite deve ser um número.")
+        return value
 
 
 class RuleSerializer(serializers.ModelSerializer):
@@ -56,13 +54,8 @@ class RuleSerializer(serializers.ModelSerializer):
     created_by_email = serializers.CharField(source='created_by.email', read_only=True)
     condition_display = serializers.CharField(source='get_condition_display', read_only=True)
     
-    # Campo write_only para aceitar parameters do frontend (até migration ser aplicada)
-    parameters = serializers.ListField(
-        child=serializers.DictField(),
-        write_only=True,
-        required=False,
-        allow_empty=False
-    )
+    # Nested serializer para múltiplos parâmetros
+    parameters = RuleParameterSerializer(many=True, required=False)
     
     class Meta:
         model = Rule
@@ -145,10 +138,8 @@ class RuleSerializer(serializers.ModelSerializer):
         """Cria regra com parâmetros aninhados"""
         parameters_data = validated_data.pop('parameters', [])
         
-        # Se veio parameters (novo formato), converter para formato antigo TEMPORARIAMENTE
-        # até a migration ser aplicada
+        # Manter compatibilidade: se veio parameters, usar o primeiro nos campos antigos
         if parameters_data:
-            # Usar o primeiro parâmetro como campos principais (compatibilidade)
             first_param = parameters_data[0]
             validated_data['parameter_key'] = first_param.get('parameter_key')
             validated_data['variable_key'] = first_param.get('variable_key', '')
@@ -158,15 +149,14 @@ class RuleSerializer(serializers.ModelSerializer):
             validated_data['duration'] = first_param.get('duration', 5)
             validated_data['severity'] = first_param.get('severity', 'Medium')
         
-        # Criar a regra (apenas formato antigo até migration ser aplicada)
+        # Criar a regra
         rule = Rule.objects.create(**validated_data)
         
-        # NÃO tentar criar RuleParameter até migration ser aplicada
-        # TODO: Após aplicar migration 0002, descomentar código abaixo
-        # if parameters_data:
-        #     for idx, param_data in enumerate(parameters_data):
-        #         param_data['order'] = idx
-        #         RuleParameter.objects.create(rule=rule, **param_data)
+        # Criar os parâmetros na tabela RuleParameter
+        if parameters_data:
+            for idx, param_data in enumerate(parameters_data):
+                param_data['order'] = idx
+                RuleParameter.objects.create(rule=rule, **param_data)
         
         return rule
     
@@ -174,7 +164,7 @@ class RuleSerializer(serializers.ModelSerializer):
         """Atualiza regra e seus parâmetros"""
         parameters_data = validated_data.pop('parameters', None)
         
-        # Se veio parameters (novo formato), converter para formato antigo TEMPORARIAMENTE
+        # Manter compatibilidade: se veio parameters, atualizar campos antigos também
         if parameters_data:
             first_param = parameters_data[0]
             validated_data['parameter_key'] = first_param.get('parameter_key')
@@ -190,13 +180,15 @@ class RuleSerializer(serializers.ModelSerializer):
             setattr(instance, attr, value)
         instance.save()
         
-        # NÃO tentar atualizar RuleParameter até migration ser aplicada
-        # TODO: Após aplicar migration 0002, descomentar código abaixo
-        # if parameters_data is not None:
-        #     instance.parameters.all().delete()
-        #     for idx, param_data in enumerate(parameters_data):
-        #         param_data['order'] = idx
-        #         RuleParameter.objects.create(rule=instance, **param_data)
+        # Atualizar os parâmetros na tabela RuleParameter
+        if parameters_data is not None:
+            # Deletar parâmetros existentes
+            instance.parameters.all().delete()
+            
+            # Criar novos parâmetros
+            for idx, param_data in enumerate(parameters_data):
+                param_data['order'] = idx
+                RuleParameter.objects.create(rule=instance, **param_data)
         
         return instance
 

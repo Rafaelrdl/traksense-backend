@@ -10,86 +10,85 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 
 
-# TEMPORARIAMENTE COMENTADO até migration ser aplicada
-# class RuleParameter(models.Model):
-#     """
-#     Parâmetro individual de uma regra.
-#     Permite múltiplos parâmetros por regra.
-#     """
-#     
-#     OPERATOR_CHOICES = [
-#         ('>', 'Maior que'),
-#         ('>=', 'Maior ou igual'),
-#         ('<', 'Menor que'),
-#         ('<=', 'Menor ou igual'),
-#         ('==', 'Igual'),
-#         ('!=', 'Diferente'),
-#     ]
-#     
-#     SEVERITY_CHOICES = [
-#         ('Critical', 'Crítico'),
-#         ('High', 'Alto'),
-#         ('Medium', 'Médio'),
-#         ('Low', 'Baixo'),
-#     ]
-#     
-#     # Relacionamento com a regra
-#     rule = models.ForeignKey(
-#         'Rule',
-#         on_delete=models.CASCADE,
-#         related_name='parameters',
-#         verbose_name='Regra'
-#     )
-#     
-#     # Identificação do sensor/parâmetro
-#     parameter_key = models.CharField(max_length=100, verbose_name='Chave do Parâmetro')
-#     variable_key = models.CharField(max_length=100, blank=True, verbose_name='Chave da Variável')
-#     
-#     # Condição
-#     operator = models.CharField(max_length=10, choices=OPERATOR_CHOICES, verbose_name='Operador')
-#     threshold = models.FloatField(verbose_name='Valor Limite')
-#     unit = models.CharField(max_length=50, blank=True, verbose_name='Unidade')
-#     duration = models.IntegerField(default=5, verbose_name='Duração (minutos)')
-#     
-#     # Severidade e mensagem
-#     severity = models.CharField(max_length=20, choices=SEVERITY_CHOICES, default='Medium', verbose_name='Severidade')
-#     message_template = models.TextField(
-#         verbose_name='Template da Mensagem',
-#         help_text='Use {sensor}, {value}, {threshold}, {operator}, {unit} como variáveis'
-#     )
-#     
-#     # Ordem de exibição
-#     order = models.IntegerField(default=0, verbose_name='Ordem')
-#     
-#     # Timestamps
-#     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Criado em')
-#     updated_at = models.DateTimeField(auto_now=True, verbose_name='Atualizado em')
-#     
-#     class Meta:
-#         db_table = 'alerts_ruleparameter'
-#         verbose_name = 'Parâmetro de Regra'
-#         verbose_name_plural = 'Parâmetros de Regra'
-#         ordering = ['rule', 'order', 'id']
-#         indexes = [
-#             models.Index(fields=['rule', 'order']),
-#             models.Index(fields=['parameter_key']),
-#         ]
-#     
-#     def __str__(self):
-#         return f"{self.rule.name} - {self.parameter_key}"
-#     
-#     def get_condition_display(self):
-#         """Retorna a condição formatada para exibição"""
-#         operator_symbols = {
-#             '>': '>',
-#             '>=': '≥',
-#             '<': '<',
-#             '<=': '≤',
-#             '==': '=',
-#             '!=': '≠',
-#         }
-#         symbol = operator_symbols.get(self.operator, self.operator)
-#         return f"{self.parameter_key} {symbol} {self.threshold} {self.unit}"
+class RuleParameter(models.Model):
+    """
+    Parâmetro individual de uma regra.
+    Permite múltiplos parâmetros por regra.
+    """
+    
+    OPERATOR_CHOICES = [
+        ('>', 'Maior que'),
+        ('>=', 'Maior ou igual'),
+        ('<', 'Menor que'),
+        ('<=', 'Menor ou igual'),
+        ('==', 'Igual'),
+        ('!=', 'Diferente'),
+    ]
+    
+    SEVERITY_CHOICES = [
+        ('Critical', 'Crítico'),
+        ('High', 'Alto'),
+        ('Medium', 'Médio'),
+        ('Low', 'Baixo'),
+    ]
+    
+    # Relacionamento com a regra
+    rule = models.ForeignKey(
+        'Rule',
+        on_delete=models.CASCADE,
+        related_name='parameters',
+        verbose_name='Regra'
+    )
+    
+    # Identificação do sensor/parâmetro
+    parameter_key = models.CharField(max_length=100, verbose_name='Chave do Parâmetro')
+    variable_key = models.CharField(max_length=100, blank=True, verbose_name='Chave da Variável')
+    
+    # Condição
+    operator = models.CharField(max_length=10, choices=OPERATOR_CHOICES, verbose_name='Operador')
+    threshold = models.FloatField(verbose_name='Valor Limite')
+    unit = models.CharField(max_length=50, blank=True, verbose_name='Unidade')
+    duration = models.IntegerField(default=5, verbose_name='Duração (minutos)')
+    
+    # Severidade e mensagem
+    severity = models.CharField(max_length=20, choices=SEVERITY_CHOICES, default='Medium', verbose_name='Severidade')
+    message_template = models.TextField(
+        verbose_name='Template da Mensagem',
+        help_text='Use {sensor}, {value}, {threshold}, {operator}, {unit} como variáveis'
+    )
+    
+    # Ordem de exibição
+    order = models.IntegerField(default=0, verbose_name='Ordem')
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Criado em')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Atualizado em')
+    
+    class Meta:
+        db_table = 'alerts_ruleparameter'
+        verbose_name = 'Parâmetro de Regra'
+        verbose_name_plural = 'Parâmetros de Regra'
+        ordering = ['rule', 'order', 'id']
+        indexes = [
+            models.Index(fields=['rule', 'order']),
+            models.Index(fields=['parameter_key']),
+        ]
+    
+    def __str__(self):
+        return f"{self.rule.name} - {self.parameter_key}"
+    
+    def get_condition_display(self):
+        """Retorna a condição formatada para exibição"""
+        operator_symbols = {
+            '>': '>',
+            '>=': '≥',
+            '<': '<',
+            '<=': '≤',
+            '==': '=',
+            '!=': '≠',
+        }
+        symbol = operator_symbols.get(self.operator, self.operator)
+        return f"{self.parameter_key} {symbol} {self.threshold} {self.unit}"
 
 
 class Rule(models.Model):
