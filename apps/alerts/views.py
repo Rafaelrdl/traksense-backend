@@ -216,16 +216,17 @@ class AlertViewSet(viewsets.ModelViewSet):
         """Retorna estatísticas dos alertas"""
         queryset = self.get_queryset()
         
+        # Padronizar severidades em MAIÚSCULAS para consistência com frontend
         stats = {
             'total': queryset.count(),
             'active': queryset.filter(acknowledged=False, resolved=False).count(),
             'acknowledged': queryset.filter(acknowledged=True, resolved=False).count(),
             'resolved': queryset.filter(resolved=True).count(),
             'by_severity': {
-                'Critical': queryset.filter(severity='Critical').count(),
-                'High': queryset.filter(severity='High').count(),
-                'Medium': queryset.filter(severity='Medium').count(),
-                'Low': queryset.filter(severity='Low').count(),
+                'CRITICAL': queryset.filter(severity='Critical').count(),
+                'HIGH': queryset.filter(severity='High').count(),
+                'MEDIUM': queryset.filter(severity='Medium').count(),
+                'LOW': queryset.filter(severity='Low').count(),
             }
         }
         

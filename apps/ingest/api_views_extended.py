@@ -186,7 +186,13 @@ class DeviceHistoryView(APIView):
     def get(self, request, device_id):
         """Get historical data for device."""
         # Parse parameters
-        sensor_id = request.query_params.get('sensor_id')
+        # Support multiple sensor_id via getlist (e.g., ?sensor_id=1&sensor_id=2)
+        sensor_ids = request.query_params.getlist('sensor_id')
+        if not sensor_ids:
+            # Fallback to single sensor_id parameter
+            single_sensor = request.query_params.get('sensor_id')
+            sensor_ids = [single_sensor] if single_sensor else []
+        
         from_str = request.query_params.get('from')
         to_str = request.query_params.get('to')
         interval = request.query_params.get('interval', 'auto')
@@ -227,48 +233,100 @@ class DeviceHistoryView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Build query
+        # Build query with multi-sensor support
         if interval == 'raw':
-            # No aggregation
-            sql = """
-                SELECT ts, sensor_id, value
-                FROM reading
-                WHERE device_id = %s
-                  AND (%s IS NULL OR sensor_id = %s)
-                  AND ts >= %s
-                  AND ts <= %s
-                ORDER BY ts DESC
-                LIMIT %s
-            """
-            params = [device_id, sensor_id, sensor_id, ts_from, ts_to, limit]
+            # No aggregation - ORDER BY ASC for chronological charts
+            if sensor_ids:
+                # Filter by specific sensors
+                placeholders = ','.join(['%s'] * len(sensor_ids))
+                sql = f"""
+                    SELECT ts, sensor_id, value
+                    FROM reading
+                    WHERE device_id = %s
+                      AND sensor_id IN ({placeholders})
+                      AND ts >= %s
+                      AND ts <= %s
+                    ORDER BY ts ASC
+                    LIMIT %s
+                """
+                params = [device_id] + sensor_ids + [ts_from, ts_to, limit]
+            else:
+                # All sensors
+                sql = """
+                    SELECT ts, sensor_id, value
+                    FROM reading
+                    WHERE device_id = %s
+                      AND ts >= %s
+                      AND ts <= %s
+                    ORDER BY ts ASC
+                    LIMIT %s
+                """
+                params = [device_id, ts_from, ts_to, limit]
         else:
-            # With aggregation
+            # With aggregation - ORDER BY ASC for chronological charts
             bucket_interval = {'1m': '1 minute', '5m': '5 minutes', '1h': '1 hour'}[interval]
-            sql = f"""
-                SELECT time_bucket(%(bucket_interval)s, ts) AS bucket,
-                       sensor_id,
-                       avg(value) AS avg_value,
-                       min(value) AS min_value,
-                       max(value) AS max_value,
-                       last(value, ts) AS last_value,
-                       count(*) AS count
-                FROM reading
-                WHERE device_id = %(device_id)s
-                  AND (%(sensor_id)s IS NULL OR sensor_id = %(sensor_id)s)
-                  AND ts >= %(ts_from)s
-                  AND ts <= %(ts_to)s
-                GROUP BY bucket, sensor_id
-                ORDER BY bucket DESC
-                LIMIT %(limit)s
-            """
-            params = {
-                'bucket_interval': bucket_interval,
-                'device_id': device_id,
-                'sensor_id': sensor_id,
-                'ts_from': ts_from,
-                'ts_to': ts_to,
-                'limit': limit
-            }
+            
+            if sensor_ids:
+                # Filter by specific sensors
+                placeholders = ','.join(['%s'] * len(sensor_ids))
+                sql = f"""
+                    SELECT time_bucket(%(bucket_interval)s, ts) AS bucket,
+                           sensor_id,
+                           avg(value) AS avg_value,
+                           min(value) AS min_value,
+                           max(value) AS max_value,
+                           last(value, ts) AS last_value,
+                           count(*) AS count
+                    FROM reading
+                    WHERE device_id = %(device_id)s
+                      AND sensor_id IN ({placeholders})
+                      AND ts >= %(ts_from)s
+                      AND ts <= %(ts_to)s
+                    GROUP BY bucket, sensor_id
+                    ORDER BY bucket ASC
+                    LIMIT %(limit)s
+                """
+                # Use named params for aggregation
+                params = {
+                    'bucket_interval': bucket_interval,
+                    'device_id': device_id,
+                    'ts_from': ts_from,
+                    'ts_to': ts_to,
+                    'limit': limit
+                }
+                # Convert to positional for IN clause
+                sql_positional = sql.replace('%(bucket_interval)s', f"'{bucket_interval}'")
+                sql_positional = sql_positional.replace('%(device_id)s', '%s')
+                sql_positional = sql_positional.replace('%(ts_from)s', '%s')
+                sql_positional = sql_positional.replace('%(ts_to)s', '%s')
+                sql_positional = sql_positional.replace('%(limit)s', '%s')
+                sql = sql_positional
+                params = [device_id] + sensor_ids + [ts_from, ts_to, limit]
+            else:
+                # All sensors
+                sql = f"""
+                    SELECT time_bucket(%(bucket_interval)s, ts) AS bucket,
+                           sensor_id,
+                           avg(value) AS avg_value,
+                           min(value) AS min_value,
+                           max(value) AS max_value,
+                           last(value, ts) AS last_value,
+                           count(*) AS count
+                    FROM reading
+                    WHERE device_id = %(device_id)s
+                      AND ts >= %(ts_from)s
+                      AND ts <= %(ts_to)s
+                    GROUP BY bucket, sensor_id
+                    ORDER BY bucket ASC
+                    LIMIT %(limit)s
+                """
+                params = {
+                    'bucket_interval': bucket_interval,
+                    'device_id': device_id,
+                    'ts_from': ts_from,
+                    'ts_to': ts_to,
+                    'limit': limit
+                }
         
         # Execute query
         with connection.cursor() as cursor:
@@ -285,7 +343,7 @@ class DeviceHistoryView(APIView):
         
         return Response({
             'device_id': device_id,
-            'sensor_id': sensor_id,
+            'sensor_ids': sensor_ids if sensor_ids else None,  # Return list of requested sensors
             'interval': interval,
             'from': ts_from.isoformat(),
             'to': ts_to.isoformat(),
@@ -400,13 +458,48 @@ class DeviceSummaryView(APIView):
                 'is_online': is_online,
                 'last_value': reading_data['value'],
                 'last_reading': reading_ts.isoformat(),
-                'statistics_24h': {
-                    'avg': None,  # TODO: Calcular estatísticas
-                    'min': None,
-                    'max': None,
-                    'count': 0,
-                    'stddev': None,
-                }
+                'statistics_24h': None,  # Will be filled below with SQL aggregates
+            })
+        
+        # Calculate 24h statistics per sensor
+        stats_24h_sql = """
+            SELECT 
+                sensor_id,
+                AVG(value) as avg_value,
+                MIN(value) as min_value,
+                MAX(value) as max_value,
+                STDDEV(value) as stddev_value,
+                COUNT(*) as count
+            FROM reading
+            WHERE device_id = %s
+              AND ts >= %s
+            GROUP BY sensor_id
+        """
+        cursor.execute(stats_24h_sql, [device_id, stats_since])
+        stats_24h_rows = cursor.fetchall()
+        stats_24h_columns = [desc[0] for desc in cursor.description]
+        
+        # Build stats dict by sensor_id
+        stats_by_sensor = {}
+        for row in stats_24h_rows:
+            stats_dict = dict(zip(stats_24h_columns, row))
+            stats_by_sensor[stats_dict['sensor_id']] = {
+                'avg': float(stats_dict['avg_value']) if stats_dict['avg_value'] is not None else None,
+                'min': float(stats_dict['min_value']) if stats_dict['min_value'] is not None else None,
+                'max': float(stats_dict['max_value']) if stats_dict['max_value'] is not None else None,
+                'stddev': float(stats_dict['stddev_value']) if stats_dict['stddev_value'] is not None else None,
+                'count': int(stats_dict['count']) if stats_dict['count'] is not None else 0,
+            }
+        
+        # Attach statistics to sensors
+        for sensor in sensors:
+            sensor_id = sensor['sensor_id']
+            sensor['statistics_24h'] = stats_by_sensor.get(sensor_id, {
+                'avg': None,
+                'min': None,
+                'max': None,
+                'stddev': None,
+                'count': 0,
             })
         
         # Device status (uppercase for frontend compatibility)

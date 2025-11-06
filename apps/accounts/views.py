@@ -88,11 +88,26 @@ class LoginView(APIView):
         # Generate tokens
         refresh = RefreshToken.for_user(user)
         
+        # Get tenant information from current connection
+        from django.db import connection
+        tenant_slug = getattr(connection, 'schema_name', 'public')
+        tenant_domain = request.get_host()
+        
+        # Construct API base URL for multi-tenant frontend
+        protocol = 'https' if request.is_secure() else 'http'
+        api_base_url = f"{protocol}://{tenant_domain}/api"
+        
         response_data = {
             'user': UserSerializer(user).data,
             'access': str(refresh.access_token),
             'refresh': str(refresh),
-            'message': 'Login realizado com sucesso!'
+            'message': 'Login realizado com sucesso!',
+            # Multi-tenant information for frontend
+            'tenant': {
+                'slug': tenant_slug,
+                'domain': tenant_domain,
+                'api_base_url': api_base_url,
+            }
         }
         
         # Create response with HttpOnly cookies
