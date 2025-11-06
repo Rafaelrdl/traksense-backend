@@ -131,6 +131,48 @@ class SiteViewSet(viewsets.ModelViewSet):
         serializer = DeviceListSerializer(devices, many=True)
         return Response(serializer.data)
     
+    @action(detail=True, methods=['get'], url_path='devices/summary')
+    def devices_summary(self, request, pk=None):
+        """
+        Lista todos os devices de um site com resumo de variáveis agrupadas.
+        
+        GET /api/sites/{id}/devices/summary/
+        
+        Este endpoint retorna devices com todas as suas variáveis/sensores agrupadas,
+        otimizado para exibição em UI onde cada device é mostrado como uma card
+        expansível com suas variáveis.
+        
+        Query params:
+            - device_type: Filtra por tipo de dispositivo (GATEWAY, CONTROLLER, etc)
+            - status: Filtra por status
+        
+        Retorna: Lista de DeviceSummarySerializer
+        """
+        from .serializers import DeviceSummarySerializer
+        
+        site = self.get_object()
+        
+        # Buscar devices através dos assets do site
+        devices = Device.objects.filter(
+            asset__site=site
+        ).select_related(
+            'asset', 'asset__site'
+        ).prefetch_related(
+            'sensors'
+        )
+        
+        # Filtros opcionais
+        device_type = request.query_params.get('device_type')
+        if device_type:
+            devices = devices.filter(device_type=device_type)
+        
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            devices = devices.filter(status=status_filter)
+        
+        serializer = DeviceSummarySerializer(devices, many=True)
+        return Response(serializer.data)
+    
     @action(detail=True, methods=['get'])
     def stats(self, request, pk=None):
         """
@@ -436,6 +478,51 @@ class DeviceViewSet(viewsets.ModelViewSet):
             'is_online': device.is_online,
             'status': device.status,
         })
+    
+    @action(detail=True, methods=['get'])
+    def summary(self, request, pk=None):
+        """
+        Retorna resumo do device com todas as suas variáveis agrupadas.
+        
+        GET /api/devices/{id}/summary/
+        
+        Este endpoint é otimizado para exibição em UI onde queremos mostrar
+        um device com todas as suas variáveis/sensores de forma agrupada,
+        em vez de listar sensores individuais.
+        
+        Retorna:
+            {
+                "id": 8,
+                "name": "Gateway Khomp",
+                "mqtt_client_id": "F80332010002C857",
+                "device_type": "GATEWAY",
+                "status": "ONLINE",
+                "asset_info": {
+                    "id": 7,
+                    "tag": "CHILLER-001",
+                    "name": "Chiller Principal"
+                },
+                "variables": [
+                    {
+                        "id": 20,
+                        "name": "Humidade Ambiente",
+                        "metric_type": "humidity",
+                        "unit": "percent_rh",
+                        "last_value": 52.90,
+                        "is_online": true
+                    },
+                    ...
+                ],
+                "total_variables_count": 5,
+                "online_variables_count": 5,
+                "device_status": "ONLINE"
+            }
+        """
+        from .serializers import DeviceSummarySerializer
+        
+        device = self.get_object()
+        serializer = DeviceSummarySerializer(device)
+        return Response(serializer.data)
 
 
 class SensorViewSet(viewsets.ModelViewSet):

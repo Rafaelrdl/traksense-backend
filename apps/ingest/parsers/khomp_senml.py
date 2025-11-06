@@ -181,6 +181,9 @@ class KhompSenMLParser(PayloadParser):
         model = None
         sensors = []
         
+        # Lista de elementos informativos que NÃO devem ser salvos como sensores
+        SKIP_ELEMENTS = {'model', 'gateway', 'version', 'firmware', 'hardware', 'serial'}
+        
         # Processar cada medição
         for element in senml_data[1:]:
             if not isinstance(element, dict):
@@ -190,14 +193,17 @@ class KhompSenMLParser(PayloadParser):
             if not name:
                 continue
             
-            # Identificar tipo de informação
-            if name == 'model':
-                model = element.get('vs')
-                logger.info(f"📱 Modelo do dispositivo: {model}")
-                continue
-            elif name == 'gateway':
-                gateway_id = element.get('vs')
-                logger.info(f"🌐 Gateway ID: {gateway_id}")
+            # ⚠️ FILTRO: Ignorar elementos informativos (não são sensores reais)
+            if name in SKIP_ELEMENTS:
+                value = element.get('vs') or element.get('v', 'N/A')
+                logger.info(f"ℹ️ Elemento informativo ignorado: {name}={value}")
+                
+                # Guardar valores relevantes em metadados
+                if name == 'model':
+                    model = element.get('vs')
+                elif name == 'gateway':
+                    gateway_id = element.get('vs')
+                
                 continue
             elif name == 'rssi':
                 # RSSI é uma medição especial do sinal
@@ -331,7 +337,6 @@ class KhompSenMLParser(PayloadParser):
                 sensor = Sensor.objects.create(
                     device=device,
                     tag=sensor_id,
-                    name=f"{name} ({sensor_id[:12]})",  # Nome descritivo
                     metric_type=metric_type,
                     unit=unit,
                     is_active=True
@@ -354,6 +359,12 @@ class KhompSenMLParser(PayloadParser):
         - vb: valor booleano
         """
         name = element.get('n')
+        
+        # ⚠️ FILTRO: Não processar elementos informativos
+        SKIP_ELEMENTS = {'model', 'gateway', 'version', 'firmware', 'hardware', 'serial'}
+        if name in SKIP_ELEMENTS:
+            logger.debug(f"🚫 Elemento informativo '{name}' ignorado no processamento")
+            return None
         
         # Determinar o sensor_id
         # Se o nome for um MAC address (DS18B20), usar como está

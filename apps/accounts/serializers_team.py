@@ -82,12 +82,13 @@ class InviteSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'email', 'role', 'status', 'message',
             'invited_by_email', 'invited_by_name', 'tenant_name',
-            'created_at', 'expires_at', 'accepted_at',
+            'created_at', 'expires_at', 'accepted_at', 'token',
             'is_valid', 'is_expired'
         ]
         read_only_fields = [
             'id', 'status', 'invited_by_email', 'invited_by_name',
             'tenant_name', 'created_at', 'expires_at', 'accepted_at',
+            'token',
             'is_valid', 'is_expired'
         ]
 
@@ -161,3 +162,4 @@ class TeamStatsSerializer(serializers.Serializer):
     active_members = serializers.IntegerField()
     pending_invites = serializers.IntegerField()
     members_by_role = serializers.DictField()
+    members_by_status = serializers.DictField()

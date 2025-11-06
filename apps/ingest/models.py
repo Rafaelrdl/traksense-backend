@@ -91,6 +91,31 @@ class Reading(models.Model):
         help_text="Sensor identifier (e.g., temp_001, humidity_002)"
     )
     
+    # MQTT Topic Hierarchy (source of truth)
+    asset_tag = models.CharField(
+        max_length=255,
+        db_index=True,
+        null=True,
+        blank=True,
+        help_text="Asset identifier extracted from MQTT topic (e.g., CHILLER-001)"
+    )
+    
+    tenant = models.CharField(
+        max_length=255,
+        db_index=True,
+        null=True,
+        blank=True,
+        help_text="Tenant identifier extracted from MQTT topic (e.g., umc)"
+    )
+    
+    site = models.CharField(
+        max_length=255,
+        db_index=True,
+        null=True,
+        blank=True,
+        help_text="Site identifier extracted from MQTT topic (e.g., UMC)"
+    )
+    
     # Measurement
     value = models.FloatField(
         help_text="Numeric sensor reading value"
@@ -124,6 +149,16 @@ class Reading(models.Model):
             models.Index(fields=['device_id', 'sensor_id', 'ts']),
             models.Index(fields=['sensor_id', 'ts']),
             models.Index(fields=['id']),  # For queries by ID
+            # MQTT Hierarchy indexes for efficient asset-based queries
+            models.Index(fields=['asset_tag', 'ts'], name='reading_asset_ts_idx'),
+            models.Index(fields=['tenant', 'asset_tag', 'ts'], name='reading_tenant_asset_ts_idx'),
+            models.Index(fields=['site', 'asset_tag', 'ts'], name='reading_site_asset_ts_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['device_id', 'sensor_id', 'ts'],
+                name='unique_reading_per_sensor_timestamp'
+            ),
         ]
         # Note: TimescaleDB hypertable + Continuous Aggregates via migration
     

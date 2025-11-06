@@ -103,11 +103,17 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
         
         role_counts = {item['role']: item['count'] for item in members_by_role}
         
+        members_by_status = TenantMembership.objects.filter(
+            tenant=tenant
+        ).values('status').annotate(count=Count('id'))
+        status_counts = {item['status']: item['count'] for item in members_by_status}
+        
         data = {
             'total_members': total_members,
             'active_members': active_members,
             'pending_invites': pending_invites,
-            'members_by_role': role_counts
+            'members_by_role': role_counts,
+            'members_by_status': status_counts
         }
         
         serializer = TeamStatsSerializer(data)
@@ -201,7 +207,7 @@ class InviteViewSet(viewsets.ModelViewSet):
             membership_serializer = TenantMembershipSerializer(membership)
             return Response(
                 {
-                    "detail": "Invitation accepted successfully.",
+                    "message": "Invitation accepted successfully.",
                     "membership": membership_serializer.data
                 },
                 status=status.HTTP_200_OK
@@ -233,10 +239,8 @@ class InviteViewSet(viewsets.ModelViewSet):
         # Resend email
         self._send_invite_email(invite)
         
-        return Response(
-            {"detail": "Invitation email resent successfully."},
-            status=status.HTTP_200_OK
-        )
+        serializer = InviteSerializer(invite)
+        return Response(serializer.data, status=status.HTTP_200_OK)
     
     def _send_invite_email(self, invite):
         """

@@ -180,6 +180,7 @@ class DeviceListSerializer(serializers.ModelSerializer):
     
     asset_tag = serializers.CharField(source='asset.tag', read_only=True)
     sensor_count = serializers.SerializerMethodField()
+    is_online = serializers.SerializerMethodField()
     
     class Meta:
         model = Device
@@ -193,14 +194,19 @@ class DeviceListSerializer(serializers.ModelSerializer):
             'device_type',
             'status',
             'sensor_count',
+            'is_online',
             'last_seen',
             'created_at',
         ]
-        read_only_fields = ['id', 'sensor_count', 'created_at']
+        read_only_fields = ['id', 'sensor_count', 'is_online', 'created_at']
     
     def get_sensor_count(self, obj):
         """Retorna o número de sensores neste dispositivo."""
         return obj.sensors.count()
+    
+    def get_is_online(self, obj):
+        """Retorna True se o device estiver com status ONLINE."""
+        return obj.status == 'ONLINE'
 
 
 class DeviceSerializer(serializers.ModelSerializer):
@@ -222,6 +228,7 @@ class DeviceSerializer(serializers.ModelSerializer):
     asset_name = serializers.CharField(source='asset.name', read_only=True)
     site_name = serializers.CharField(source='asset.site.name', read_only=True)
     sensor_count = serializers.SerializerMethodField()
+    is_online = serializers.SerializerMethodField()
     
     class Meta:
         model = Device
@@ -239,17 +246,22 @@ class DeviceSerializer(serializers.ModelSerializer):
             'firmware_version',
             'last_seen',
             'sensor_count',
+            'is_online',
             'created_at',
             'updated_at',
         ]
         read_only_fields = [
             'id', 'asset_tag', 'asset_name', 'site_name',
-            'sensor_count', 'last_seen', 'created_at', 'updated_at'
+            'sensor_count', 'is_online', 'last_seen', 'created_at', 'updated_at'
         ]
     
     def get_sensor_count(self, obj):
         """Retorna o número de sensores neste dispositivo."""
         return obj.sensors.count()
+    
+    def get_is_online(self, obj):
+        """Retorna True se o device estiver com status ONLINE."""
+        return obj.status == 'ONLINE'
     
     def validate_serial_number(self, value):
         """Valida que o serial number é único."""
@@ -285,6 +297,8 @@ class SensorListSerializer(serializers.ModelSerializer):
     
     device_name = serializers.CharField(source='device.name', read_only=True)
     asset_tag = serializers.CharField(source='device.asset.tag', read_only=True)
+    device_mqtt_client_id = serializers.CharField(source='device.mqtt_client_id', read_only=True)
+    device_serial = serializers.CharField(source='device.serial_number', read_only=True)
     
     class Meta:
         model = Sensor
@@ -293,6 +307,8 @@ class SensorListSerializer(serializers.ModelSerializer):
             'tag',
             'device',
             'device_name',
+            'device_serial',
+            'device_mqtt_client_id',
             'asset_tag',
             'metric_type',
             'unit',
@@ -301,7 +317,16 @@ class SensorListSerializer(serializers.ModelSerializer):
             'last_reading_at',
             'created_at',
         ]
-        read_only_fields = ['id', 'is_online', 'last_reading_at', 'created_at']
+        read_only_fields = [
+            'id',
+            'device_name',
+            'device_serial',
+            'device_mqtt_client_id',
+            'asset_tag',
+            'is_online',
+            'last_reading_at',
+            'created_at'
+        ]
 
 
 class SensorSerializer(serializers.ModelSerializer):
@@ -438,3 +463,178 @@ class SensorBulkCreateSerializer(serializers.Serializer):
             sensors.append(sensor)
         
         return sensors
+
+
+class SensorVariableSerializer(serializers.Serializer):
+    """
+    Serializer para representar uma variável/sensor individual dentro de um device.
+    
+    Usado no DeviceSummarySerializer para listar todas as variáveis medidas.
+    """
+    id = serializers.IntegerField(read_only=True)
+    tag = serializers.CharField(read_only=True)
+    name = serializers.SerializerMethodField()
+    metric_type = serializers.CharField(read_only=True)
+    unit = serializers.CharField(read_only=True)
+    last_value = serializers.FloatField(read_only=True)
+    last_reading_at = serializers.DateTimeField(read_only=True)
+    is_online = serializers.BooleanField(read_only=True)
+    
+    def get_name(self, obj):
+        """
+        Extrai nome legível da variável do tag.
+        Remove o prefixo do MAC address para exibição limpa.
+        
+        Exemplos:
+            F80332010002C857_Temperatura de retorno -> Temperatura de retorno
+            F80332010002C857_rssi -> RSSI
+            F80332010002C857_snr -> SNR
+        """
+        tag = obj.tag
+        
+        # Se o tag contém underscore, pegar a parte depois do MAC
+        if '_' in tag:
+            parts = tag.split('_', 1)
+            if len(parts) > 1:
+                name = parts[1]
+                
+                # Capitalizar siglas conhecidas
+                if name.lower() == 'rssi':
+                    return 'RSSI'
+                elif name.lower() == 'snr':
+                    return 'SNR'
+                
+                # Capitalizar primeira letra de cada palavra
+                return name.title() if name.islower() else name
+        
+        # Fallback: retorna o tag completo
+        return tag
+
+
+class DeviceSummarySerializer(serializers.ModelSerializer):
+    """
+    Serializer para resumo de Device com todas as suas variáveis agrupadas.
+    
+    Este serializer é otimizado para exibição em UI onde queremos mostrar
+    um device com todas as suas variáveis/sensores de forma agrupada.
+    
+    Campos adicionais:
+        - variables: Lista de todas as variáveis/sensores deste device
+        - online_variables_count: Número de variáveis online
+        - total_variables_count: Número total de variáveis
+        - device_status: Status geral do device baseado nas variáveis
+        - asset_info: Informações do asset vinculado
+    
+    Exemplo de resposta:
+        {
+            "id": 8,
+            "name": "Gateway Khomp",
+            "mqtt_client_id": "F80332010002C857",
+            "device_type": "GATEWAY",
+            "status": "ONLINE",
+            "last_seen": "2025-11-06T01:32:00Z",
+            "asset_info": {
+                "id": 7,
+                "tag": "CHILLER-001",
+                "name": "Chiller Principal"
+            },
+            "variables": [
+                {
+                    "id": 20,
+                    "name": "Humidade Ambiente",
+                    "metric_type": "humidity",
+                    "unit": "percent_rh",
+                    "last_value": 52.90,
+                    "last_reading_at": "2025-11-06T01:32:00Z",
+                    "is_online": true
+                },
+                ...
+            ],
+            "total_variables_count": 5,
+            "online_variables_count": 5,
+            "device_status": "ONLINE"
+        }
+    """
+    
+    variables = serializers.SerializerMethodField()
+    total_variables_count = serializers.SerializerMethodField()
+    online_variables_count = serializers.SerializerMethodField()
+    device_status = serializers.SerializerMethodField()
+    asset_info = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Device
+        fields = [
+            'id',
+            'name',
+            'serial_number',
+            'mqtt_client_id',
+            'device_type',
+            'status',
+            'firmware_version',
+            'last_seen',
+            'asset_info',
+            'variables',
+            'total_variables_count',
+            'online_variables_count',
+            'device_status',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = [
+            'id',
+            'asset_info',
+            'variables',
+            'total_variables_count',
+            'online_variables_count',
+            'device_status',
+            'created_at',
+            'updated_at'
+        ]
+    
+    def get_variables(self, obj):
+        """
+        Retorna todas as variáveis/sensores deste device.
+        Ordena por tipo de métrica para agrupamento lógico.
+        """
+        sensors = obj.sensors.all().order_by('metric_type', 'tag')
+        return SensorVariableSerializer(sensors, many=True).data
+    
+    def get_total_variables_count(self, obj):
+        """Retorna o número total de variáveis/sensores."""
+        return obj.sensors.count()
+    
+    def get_online_variables_count(self, obj):
+        """Retorna o número de variáveis online (com leitura recente)."""
+        return obj.sensors.filter(is_online=True).count()
+    
+    def get_device_status(self, obj):
+        """
+        Determina o status geral do device baseado nas variáveis.
+        
+        Lógica:
+            - ONLINE: Se alguma variável estiver online
+            - OFFLINE: Se nenhuma variável estiver online
+            - Retorna o status do próprio device como fallback
+        """
+        online_count = self.get_online_variables_count(obj)
+        
+        if online_count > 0:
+            return 'ONLINE'
+        elif obj.sensors.count() > 0:
+            return 'OFFLINE'
+        
+        return obj.status
+    
+    def get_asset_info(self, obj):
+        """
+        Retorna informações resumidas do asset vinculado.
+        """
+        if obj.asset:
+            return {
+                'id': obj.asset.id,
+                'tag': obj.asset.tag,
+                'name': obj.asset.name,
+                'site_name': obj.asset.site.name if obj.asset.site else None,
+            }
+        return None

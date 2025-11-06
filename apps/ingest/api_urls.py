@@ -10,7 +10,8 @@ from .api_views import (
 from .api_views_extended import (
     LatestReadingsView,
     DeviceHistoryView,
-    DeviceSummaryView
+    DeviceSummaryView,
+    AssetTelemetryHistoryView
 )
 
 app_name = 'telemetry'
@@ -29,4 +30,7 @@ urlpatterns = [
     path('latest/<str:device_id>/', LatestReadingsView.as_view(), name='latest-readings'),
     path('history/<str:device_id>/', DeviceHistoryView.as_view(), name='device-history'),
     path('device/<str:device_id>/summary/', DeviceSummaryView.as_view(), name='device-summary'),
+    
+    # Asset-centric endpoints (MQTT topic hierarchy source of truth)
+    path('assets/<str:asset_tag>/history/', AssetTelemetryHistoryView.as_view(), name='asset-history'),
 ]

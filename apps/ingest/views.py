@@ -1,7 +1,8 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 
-from django.db import connection
+from django.db import connection, transaction
+from django.utils import timezone as dj_timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status
@@ -49,7 +50,8 @@ class IngestView(APIView):
         logger.info("🔵 INGEST POST INICIADO")
         logger.info(f"Headers: {dict(request.headers)}")
         logger.info(f"Content-Type: {request.content_type}")
-        logger.info(f"Body (primeiros 500 chars): {request.body[:500]}")
+        logger.info(f"📏 Body tamanho: {len(request.body)} bytes")
+        logger.info(f"Body COMPLETO: {request.body.decode('utf-8')}")
         logger.info("=" * 60)
         
         # Extract tenant from header
@@ -63,10 +65,8 @@ class IngestView(APIView):
         
         # Get tenant from public schema and switch to its schema
         try:
-            # Ensure we're searching in public schema
             connection.set_schema_to_public()
             tenant = Tenant.objects.get(slug=tenant_slug)
-            # Switch to tenant schema for saving data
             connection.set_tenant(tenant)
         except Tenant.DoesNotExist:
             logger.warning(f"Tenant not found: {tenant_slug}")
@@ -74,175 +74,263 @@ class IngestView(APIView):
                 {"error": "Internal server error"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
-        # Validate payload structure
-        data = request.data
-        
-        # DEBUG: Log incoming data
-        logger.info(f"📥 Ingest received data: {data}")
-        
-        if not isinstance(data, dict):
-            logger.warning(f"Invalid payload type: {type(data)}")
-            return Response(
-                {"error": "Payload must be JSON object"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Extract fields from EMQX payload
-        client_id = data.get('client_id')  # Optional, will use device_id from payload
-        topic = data.get('topic')
-        payload = data.get('payload')
-        ts = data.get('ts')  # Unix timestamp in milliseconds
-        
-        # Validate required fields (client_id is optional)
-        if not all([topic, payload, ts]):
-            missing = [f for f in ['topic', 'payload', 'ts'] 
-                      if not data.get(f)]
-            logger.warning(f"Missing required fields: {missing}")
-            return Response(
-                {"error": f"Missing required fields: {', '.join(missing)}"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Convert Unix milliseconds to datetime
+
+        def ensure_aware_timestamp(value, fallback):
+            """Converte timestamps em datetime timezone-aware."""
+            if value is None:
+                return fallback
+            if isinstance(value, str):
+                try:
+                    value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                except ValueError:
+                    logger.warning(f"⚠️ Timestamp inválido recebido: {value}")
+                    return fallback
+            if isinstance(value, (int, float)):
+                try:
+                    # Assume valor em segundos; se vier em milissegundos, converter
+                    if abs(value) > 1e12:
+                        value = value / 1000.0
+                    value = datetime.fromtimestamp(value, tz=dt_timezone.utc)
+                except (ValueError, OSError, OverflowError) as exc:
+                    logger.warning(f"⚠️ Falha ao converter timestamp numérico {value}: {exc}")
+                    return fallback
+            if isinstance(value, datetime):
+                if dj_timezone.is_naive(value):
+                    return dj_timezone.make_aware(value, dt_timezone.utc)
+                return value
+            return fallback
+
         try:
-            timestamp = datetime.fromtimestamp(ts / 1000.0)
-        except (ValueError, TypeError) as e:
-            logger.warning(f"Invalid timestamp: {ts} - {e}")
-            return Response(
-                {"error": "Invalid timestamp format"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Parse payload if it's a string (should already be dict from JSON)
-        if isinstance(payload, str):
+            # Validate payload structure
+            logger.info("🔍 Parseando JSON manualmente do request.body...")
             import json
             try:
-                payload = json.loads(payload)
-            except json.JSONDecodeError as e:
-                logger.warning(f"Failed to parse payload JSON: {e}")
+                raw_body = request.body.decode('utf-8')
+                logger.info(f"📏 Body completo ({len(raw_body)} chars): {raw_body}")
+                data = json.loads(raw_body)
+                logger.info(f"✅ JSON parseado com sucesso, tipo: {type(data)}")
+            except json.JSONDecodeError as e_json:
+                logger.error(f"❌ Erro ao parsear JSON: {e_json}", exc_info=True)
+                logger.error(f"JSON problemático: {raw_body}")
                 return Response(
-                    {"error": "Invalid JSON in payload"},
+                    {"error": f"Erro ao parsear JSON: {str(e_json)}"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-        
-        # 🎯 USAR O SISTEMA DE PARSERS
-        # Encontrar o parser adequado para o formato do payload
-        parser = parser_manager.get_parser(data, topic)
-        
-        if not parser:
-            logger.warning(f"⚠️ Nenhum parser encontrado para o payload. Topic: {topic}")
-            return Response(
-                {"error": "Formato de payload não reconhecido"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Parsear o payload usando o parser selecionado
-        try:
-            parsed_data = parser.parse(data, topic)
-            logger.info(f"✅ Payload parseado com sucesso usando {parser.__class__.__name__}")
-            logger.info(f"📊 Device: {parsed_data['device_id']}, Sensors: {len(parsed_data['sensors'])}")
-        except Exception as e:
-            logger.error(f"❌ Erro ao parsear payload: {e}", exc_info=True)
-            return Response(
-                {"error": f"Erro ao processar payload: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        
-        # Extrair dados parseados
-        device_id = parsed_data['device_id']
-        timestamp = parsed_data['timestamp']
-        sensors = parsed_data['sensors']
-        metadata = parsed_data.get('metadata', {})
-        
-        # Save to database
-        try:
-            # 1. Save raw telemetry (MQTT message)
-            telemetry = Telemetry.objects.create(
-                device_id=device_id,
-                topic=topic,
-                payload=payload,
-                timestamp=timestamp
-            )
-            
-            # 2. 🆕 NOVA LÓGICA: Extrair site e asset do tópico e auto-vincular
-            site_name, asset_tag = self._extract_site_and_asset_from_topic(topic)
-            
-            if asset_tag:
-                logger.info(f"🔗 Asset tag extraído do tópico: {asset_tag}")
-                if site_name:
-                    logger.info(f"📍 Site extraído do tópico: {site_name}")
-                
-                # Criar/atualizar asset, device e sensores automaticamente
-                asset = self._auto_create_and_link_asset(
-                    site_name=site_name,
-                    asset_tag=asset_tag,
-                    device_id=device_id,
-                    parsed_data=parsed_data
+            except Exception as e_data:
+                logger.error(f"❌ Erro inesperado: {e_data}", exc_info=True)
+                return Response(
+                    {"error": f"Erro ao processar request: {str(e_data)}"},
+                    status=status.HTTP_400_BAD_REQUEST
                 )
-                
-                if asset:
-                    logger.info(f"✅ Asset {asset_tag} processado no site {asset.site.name}")
-                else:
-                    logger.warning(f"⚠️ Não foi possível processar asset {asset_tag}")
-            else:
-                logger.warning(f"⚠️ Não foi possível extrair asset_tag do tópico: {topic}")
-            
-            # 3. Salvar leituras individuais dos sensores (já parseados)
-            readings_created = 0
-            
-            for sensor in sensors:
-                if not isinstance(sensor, dict):
-                    continue
-                
-                sensor_id = sensor.get('sensor_id')
-                value = sensor.get('value')
-                
-                if sensor_id and value is not None:
-                    # Labels já vêm processados do parser
-                    labels = sensor.get('labels', {})
-                    if not isinstance(labels, dict):
-                        labels = {}
-                    
-                    Reading.objects.create(
-                        device_id=device_id,
-                        sensor_id=sensor_id,
-                        value=float(value),
-                        labels=labels,
-                        ts=timestamp
+
+            logger.info(f"📥 Ingest received data: {data}")
+
+            if not isinstance(data, dict):
+                logger.warning(f"Invalid payload type: {type(data)}")
+                return Response(
+                    {"error": "Payload must be JSON object"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            client_id = data.get('client_id')
+            topic = data.get('topic')
+            payload = data.get('payload')
+            ts = data.get('ts')
+
+            if not all([topic, payload, ts]):
+                missing = [f for f in ['topic', 'payload', 'ts'] if not data.get(f)]
+                logger.warning(f"Missing required fields: {missing}")
+                return Response(
+                    {"error": f"Missing required fields: {', '.join(missing)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                ingest_timestamp = datetime.fromtimestamp(ts / 1000.0, tz=dt_timezone.utc)
+            except (ValueError, TypeError, OSError, OverflowError) as e:
+                logger.warning(f"Invalid timestamp: {ts} - {e}")
+                return Response(
+                    {"error": "Invalid timestamp format"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if isinstance(payload, str):
+                import json
+                try:
+                    payload = json.loads(payload)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse payload JSON: {e}")
+                    return Response(
+                        {"error": "Invalid JSON in payload"},
+                        status=status.HTTP_400_BAD_REQUEST
                     )
-                    readings_created += 1
+
+            logger.info(f"🔍 Tentando encontrar parser para topic: {topic}")
+            logger.info(f"🔍 Tipo do payload: {type(payload)}")
+            logger.info(f"🔍 Payload preview: {str(payload)[:200]}")
             
-            logger.info(
-                f"✅ Telemetry saved: tenant={tenant_slug}, "
-                f"device={device_id}, topic={topic}, format={metadata.get('format', 'unknown')}"
-            )
-            logger.info(f"📊 Created {readings_created} sensor readings")
-            
-            # Preparar resposta com informações do parser
-            response_data = {
-                "status": "accepted",
-                "id": telemetry.id,
-                "device_id": telemetry.device_id,
-                "timestamp": telemetry.timestamp.isoformat(),
-                "sensors_saved": readings_created,
-                "format": metadata.get('format', 'unknown')
-            }
-            
-            # Adicionar informações de gateway se disponível (formato SenML)
-            if metadata.get('gateway_id'):
-                response_data['gateway_id'] = metadata['gateway_id']
-            if metadata.get('model'):
-                response_data['model'] = metadata['model']
-            
-            return Response(response_data, status=status.HTTP_202_ACCEPTED)
-            
-        except Exception as e:
-            logger.error(f"Failed to save telemetry: {e}", exc_info=True)
-            return Response(
-                {"error": "Failed to save telemetry"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            # IMPORTANTE: Passar o payload interno, não o data completo!
+            parser = parser_manager.get_parser(payload, topic)
+
+            if not parser:
+                logger.warning(f"⚠️ Nenhum parser encontrado para o payload. Topic: {topic}")
+                logger.warning(f"⚠️ Payload recebido: {payload}")
+                logger.warning(f"⚠️ Parsers disponíveis: {[p.__class__.__name__ for p in parser_manager._parsers]}")
+                return Response(
+                    {"error": "Formato de payload não reconhecido"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                # IMPORTANTE: Passar o payload interno, não o data completo!
+                parsed_data = parser.parse(payload, topic)
+                logger.info(f"✅ Payload parseado com sucesso usando {parser.__class__.__name__}")
+                logger.info(f"📊 Device: {parsed_data['device_id']}, Sensors: {len(parsed_data['sensors'])}")
+            except Exception as e:
+                logger.error(f"❌ Erro ao parsear payload: {e}", exc_info=True)
+                return Response(
+                    {"error": f"Erro ao processar payload: {str(e)}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            device_id = parsed_data['device_id']
+            sensors = parsed_data['sensors']
+            metadata = parsed_data.get('metadata', {})
+            base_timestamp = ensure_aware_timestamp(parsed_data.get('timestamp'), ingest_timestamp)
+            parsed_data['timestamp'] = base_timestamp
+
+            try:
+                with transaction.atomic():
+                    telemetry = Telemetry.objects.create(
+                        device_id=device_id,
+                        topic=topic,
+                        payload=payload,
+                        timestamp=ingest_timestamp
+                    )
+
+                    # Auto linking - extract hierarchy from MQTT topic
+                    site_name, asset_tag = self._extract_site_and_asset_from_topic(topic)
+                    
+                    # Extract tenant from topic (tenants/{tenant}/...)
+                    tenant_name = None
+                    topic_parts = topic.split('/')
+                    if 'tenants' in topic_parts:
+                        tenant_idx = topic_parts.index('tenants')
+                        if tenant_idx + 1 < len(topic_parts):
+                            tenant_name = topic_parts[tenant_idx + 1]
+
+                    if asset_tag:
+                        logger.info(f"🔗 Asset tag extraído do tópico: {asset_tag}")
+                        if site_name:
+                            logger.info(f"📍 Site extraído do tópico: {site_name}")
+                        if tenant_name:
+                            logger.info(f"🏢 Tenant extraído do tópico: {tenant_name}")
+
+                        asset = self._auto_create_and_link_asset(
+                            site_name=site_name,
+                            asset_tag=asset_tag,
+                            device_id=device_id,
+                            parsed_data=parsed_data
+                        )
+
+                        if asset:
+                            logger.info(f"✅ Asset {asset_tag} processado no site {asset.site.name}")
+                        else:
+                            logger.warning(f"⚠️ Não foi possível processar asset {asset_tag}")
+                    else:
+                        logger.warning(f"⚠️ Não foi possível extrair asset_tag do tópico: {topic}")
+
+                    readings_to_create = []
+                    duplicates_skipped = 0
+
+                    for sensor in sensors:
+                        if not isinstance(sensor, dict):
+                            continue
+
+                        sensor_id = sensor.get('sensor_id')
+                        value = sensor.get('value')
+
+                        if not sensor_id or value is None:
+                            continue
+
+                        labels = sensor.get('labels', {})
+                        if not isinstance(labels, dict):
+                            labels = {}
+
+                        reading_timestamp = ensure_aware_timestamp(sensor.get('timestamp'), base_timestamp)
+
+                        if Reading.objects.filter(
+                            device_id=device_id,
+                            sensor_id=sensor_id,
+                            ts=reading_timestamp
+                        ).exists():
+                            duplicates_skipped += 1
+                            continue
+
+                        readings_to_create.append(
+                            Reading(
+                                device_id=device_id,
+                                sensor_id=sensor_id,
+                                value=float(value),
+                                labels=labels,
+                                ts=reading_timestamp,
+                                # MQTT Topic Hierarchy (source of truth)
+                                asset_tag=asset_tag,
+                                tenant=tenant_name,
+                                site=site_name
+                            )
+                        )
+
+                    if readings_to_create:
+                        Reading.objects.bulk_create(readings_to_create)
+                        
+                        # Atualizar status do device para ONLINE e last_seen
+                        try:
+                            from apps.assets.models import Device
+                            Device.objects.filter(mqtt_client_id=device_id).update(
+                                status='ONLINE',
+                                last_seen=dj_timezone.now()
+                            )
+                            logger.info(f"✅ Device {device_id} marcado como ONLINE")
+                        except Exception as e_device:
+                            logger.warning(f"⚠️ Não foi possível atualizar status do device: {e_device}")
+
+                    readings_created = len(readings_to_create)
+
+                logger.info(
+                    f"✅ Telemetry saved: tenant={tenant_slug}, "
+                    f"device={device_id}, topic={topic}, format={metadata.get('format', 'unknown')}"
+                )
+                logger.info(
+                    f"📊 Created {readings_created} sensor readings (duplicados ignorados: {duplicates_skipped})"
+                )
+
+                response_data = {
+                    "status": "accepted",
+                    "id": telemetry.id,
+                    "device_id": telemetry.device_id,
+                    "timestamp": telemetry.timestamp.isoformat(),
+                    "sensors_saved": readings_created,
+                    "duplicates_skipped": duplicates_skipped,
+                    "format": metadata.get('format', 'unknown')
+                }
+
+                if metadata.get('gateway_id'):
+                    response_data['gateway_id'] = metadata['gateway_id']
+                if metadata.get('model'):
+                    response_data['model'] = metadata['model']
+
+                return Response(response_data, status=status.HTTP_202_ACCEPTED)
+
+            except Exception as e:
+                logger.error(f"Failed to save telemetry: {e}", exc_info=True)
+                return Response(
+                    {"error": "Failed to save telemetry"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        finally:
+            connection.set_schema_to_public()
     
     def _extract_site_and_asset_from_topic(self, topic):
         """
@@ -338,21 +426,13 @@ class IngestView(APIView):
             # 1. Determinar o site
             site = None
             if site_name:
-                try:
-                    site = Site.objects.get(name=site_name, is_active=True)
+                site = Site.objects.filter(name=site_name, is_active=True).first()
+                if site:
                     logger.info(f"📍 Site encontrado: {site.name}")
-                except Site.DoesNotExist:
-                    # Criar site automaticamente se não existir
-                    site = Site.objects.create(
-                        name=site_name,
-                        company=site_name,  # Usar o mesmo nome por padrão
-                        sector='Saúde',  # Padrão para UMC
-                        timezone='America/Sao_Paulo',
-                        is_active=True
-                    )
-                    logger.info(f"✨ Site criado automaticamente: {site.name}")
+                else:
+                    logger.warning(f"⚠️ Site '{site_name}' não encontrado. Ignorando auto-criação.")
+                    return None
             else:
-                # Se não tem site no tópico, usar o primeiro site ativo
                 site = Site.objects.filter(is_active=True).first()
                 if site:
                     logger.info(f"📍 Usando site padrão: {site.name}")
@@ -433,7 +513,6 @@ class IngestView(APIView):
                         tag=sensor_id,
                         device=device,
                         defaults={
-                            'name': f'{sensor_type.title()} {sensor_id[:12]}',
                             'metric_type': self._map_sensor_type_to_metric(sensor_type),
                             'unit': unit,
                             'is_online': True,

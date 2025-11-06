@@ -89,9 +89,10 @@ class LatestReadingsView(APIView):
         
         # Serializar
         serializer = ReadingSerializer(data, many=True)
+        last_update = max(r['ts'] for r in data if r.get('ts'))
         return Response({
             'device_id': device_id,
-            'last_update': max(r['ts'] for r in data),
+            'timestamp': last_update.isoformat() if hasattr(last_update, 'isoformat') else last_update,
             'count': len(data),
             'readings': serializer.data
         })
@@ -408,15 +409,22 @@ class DeviceSummaryView(APIView):
                 }
             })
         
-        # Device status
-        device_status = 'online' if last_seen >= online_threshold else 'offline'
+        # Device status (uppercase for frontend compatibility)
+        device_status = 'ONLINE' if last_seen >= online_threshold else 'OFFLINE'
+        sensors_online = sum(1 for sensor in sensors if sensor.get('is_online'))
+        sensors_total = len(sensors)
         
         # Format statistics
         total_readings, sensor_count, avg_interval = stats_row
+        avg_readings_per_hour = round((total_readings or 0) / 24, 2) if total_readings else 0
         statistics = {
             'total_readings_24h': total_readings or 0,
-            'sensor_count': sensor_count or 0,
-            'avg_interval': f"{int(avg_interval or 0)}s" if avg_interval else 'N/A'
+            'sensor_count': sensor_count or sensors_total,
+            'avg_interval': f"{int(avg_interval or 0)}s" if avg_interval else 'N/A',
+            'avg_interval_seconds': float(avg_interval) if avg_interval else None,
+            'avg_readings_per_hour': avg_readings_per_hour,
+            'sensors_total': sensors_total,
+            'sensors_online': sensors_online,
         }
         
         # DEBUG: Log response antes de retornar
@@ -432,4 +440,202 @@ class DeviceSummaryView(APIView):
             'last_seen': last_seen.isoformat() if last_seen else None,
             'sensors': sensors,
             'statistics': statistics
+        })
+
+
+class AssetTelemetryHistoryView(APIView):
+    """
+    Get historical telemetry data for an asset using asset_tag from MQTT topic.
+    
+    This is the preferred method as it uses the source of truth (MQTT topic hierarchy)
+    instead of device_mqtt_client_id which may be empty or incorrect.
+    
+    Query parameters:
+    - from: Start timestamp (ISO 8601)
+    - to: End timestamp (ISO 8601)
+    - sensor_id: Filter by specific sensor(s) (can be multiple)
+    - interval: Aggregation level (raw, 1m, 5m, 1h, auto)
+    """
+    
+    @extend_schema(
+        summary="Get asset telemetry history by asset_tag",
+        description="""
+        Returns historical telemetry data for an asset using the asset_tag extracted
+        from MQTT topic hierarchy. This is more reliable than device_id.
+        
+        Example: GET /api/telemetry/assets/CHILLER-001/history/?from=2025-11-01T00:00:00Z&to=2025-11-02T00:00:00Z
+        """,
+        parameters=[
+            OpenApiParameter(
+                name='asset_tag',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='Asset identifier (e.g., CHILLER-001)'
+            ),
+            OpenApiParameter(
+                name='from',
+                type=OpenApiTypes.DATETIME,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Start timestamp (defaults to 24h ago)'
+            ),
+            OpenApiParameter(
+                name='to',
+                type=OpenApiTypes.DATETIME,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='End timestamp (defaults to now)'
+            ),
+            OpenApiParameter(
+                name='sensor_id',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Filter by sensor(s) - can be multiple'
+            ),
+            OpenApiParameter(
+                name='interval',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Aggregation interval: raw, 1m, 5m, 15m, 1h, auto (default)'
+            ),
+        ],
+        responses={
+            200: OpenApiTypes.OBJECT,
+            404: OpenApiTypes.OBJECT,
+        }
+    )
+    def get(self, request, asset_tag):
+        """Get historical telemetry for asset."""
+        import logging
+        from dateutil import parser
+        
+        logger = logging.getLogger(__name__)
+        
+        # Parse query parameters
+        from_str = request.query_params.get('from')
+        to_str = request.query_params.get('to')
+        sensor_ids = request.query_params.getlist('sensor_id')
+        interval = request.query_params.get('interval', 'auto')
+        
+        # Parse timestamps
+        try:
+            ts_to = parser.isoparse(to_str) if to_str else timezone.now()
+            ts_from = parser.isoparse(from_str) if from_str else ts_to - timedelta(hours=24)
+        except (ValueError, TypeError) as e:
+            return Response(
+                {'error': f'Invalid timestamp format: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Ensure timestamps are aware
+        if timezone.is_naive(ts_from):
+            ts_from = timezone.make_aware(ts_from)
+        if timezone.is_naive(ts_to):
+            ts_to = timezone.make_aware(ts_to)
+        
+        # Calculate time range and determine interval
+        time_range_hours = (ts_to - ts_from).total_seconds() / 3600
+        
+        if interval == 'auto':
+            if time_range_hours < 1:
+                interval = 'raw'
+            elif time_range_hours <= 6:
+                interval = '1m'
+            elif time_range_hours <= 24:
+                interval = '5m'
+            else:
+                interval = '1h'
+        
+        logger.info(
+            f"📊 Fetching telemetry for asset {asset_tag}: "
+            f"from={ts_from.isoformat()}, to={ts_to.isoformat()}, "
+            f"interval={interval}, sensors={sensor_ids or 'all'}"
+        )
+        
+        # Build query
+        queryset = Reading.objects.filter(
+            asset_tag=asset_tag,
+            ts__gte=ts_from,
+            ts__lte=ts_to
+        )
+        
+        if sensor_ids:
+            queryset = queryset.filter(sensor_id__in=sensor_ids)
+        
+        # Get data
+        if interval == 'raw':
+            # Return raw data
+            data = list(queryset.values('sensor_id', 'ts', 'value').order_by('sensor_id', 'ts'))
+            
+            # Format for frontend
+            result = []
+            for reading in data:
+                result.append({
+                    'sensor_id': reading['sensor_id'],
+                    'ts': reading['ts'].isoformat(),
+                    'value': reading['value']
+                })
+        else:
+            # Aggregate data using time_bucket
+            interval_map = {
+                '1m': '1 minute',
+                '5m': '5 minutes',
+                '15m': '15 minutes',
+                '1h': '1 hour',
+            }
+            bucket_interval = interval_map.get(interval, '5 minutes')
+            
+            sql = """
+                SELECT 
+                    sensor_id,
+                    time_bucket(%s::interval, ts) AS bucket,
+                    AVG(value) AS avg_value,
+                    MIN(value) AS min_value,
+                    MAX(value) AS max_value,
+                    COUNT(*) AS count
+                FROM reading
+                WHERE asset_tag = %s
+                  AND ts >= %s
+                  AND ts <= %s
+                  AND (%s IS NULL OR sensor_id = ANY(%s))
+                GROUP BY sensor_id, bucket
+                ORDER BY sensor_id, bucket
+            """
+            
+            with connection.cursor() as cursor:
+                cursor.execute(sql, [
+                    bucket_interval,
+                    asset_tag,
+                    ts_from,
+                    ts_to,
+                    None if not sensor_ids else sensor_ids,
+                    sensor_ids or []
+                ])
+                columns = [col[0] for col in cursor.description]
+                rows = cursor.fetchall()
+            
+            result = []
+            for row in rows:
+                row_dict = dict(zip(columns, row))
+                result.append({
+                    'sensor_id': row_dict['sensor_id'],
+                    'ts': row_dict['bucket'].isoformat() if hasattr(row_dict['bucket'], 'isoformat') else row_dict['bucket'],
+                    'avg_value': float(row_dict['avg_value']) if row_dict['avg_value'] is not None else None,
+                    'min_value': float(row_dict['min_value']) if row_dict['min_value'] is not None else None,
+                    'max_value': float(row_dict['max_value']) if row_dict['max_value'] is not None else None,
+                    'count': row_dict['count']
+                })
+        
+        logger.info(f"✅ Found {len(result)} data points for asset {asset_tag}")
+        
+        return Response({
+            'asset_tag': asset_tag,
+            'from': ts_from.isoformat(),
+            'to': ts_to.isoformat(),
+            'interval': interval,
+            'count': len(result),
+            'data': result
         })

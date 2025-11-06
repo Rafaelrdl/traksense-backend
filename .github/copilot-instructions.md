@@ -166,6 +166,147 @@ traksense-backend/
 - Sets `connection.schema_name` for all queries
 - Isolates data automatically
 
+---
+
+## 🎯 CRITICAL: MQTT Topic-Based Validation
+
+### ⚠️ ALWAYS Use MQTT Topic as Source of Truth for Sensors
+
+**RULE:** When dealing with sensors, devices, or telemetry relationships, **ALWAYS validate and organize data based on MQTT topic structure**, not by individual device IDs.
+
+#### MQTT Topic Structure
+```
+tenants/{tenant_slug}/sites/{site_name}/assets/{asset_tag}/telemetry
+```
+
+**Example:**
+```
+tenants/umc/sites/Uberlândia Medical Center/assets/CHILLER-001/telemetry
+```
+
+#### Why This Matters
+
+❌ **WRONG APPROACH (Device-centric):**
+```python
+# Searching by device_id only shows sensors from ONE device
+sensors = Sensor.objects.filter(device__mqtt_client_id=device_id)
+
+# Problem: If an Asset has multiple devices (e.g., old device + new gateway),
+# you'll only see sensors from ONE device at a time
+```
+
+✅ **CORRECT APPROACH (Topic/Asset-centric):**
+```python
+# Searching by Asset shows sensors from ALL devices of that asset
+sensors = Sensor.objects.filter(device__asset=asset)
+
+# This automatically includes sensors from all devices linked to the asset,
+# respecting the MQTT topic hierarchy: tenant → site → asset
+```
+
+#### Implementation Guidelines
+
+**Backend (Django):**
+1. **Ingest endpoint** (`apps/ingest/views.py`):
+   - Parse topic to extract: `tenant`, `site`, `asset_tag`
+   - Auto-create hierarchy: Tenant → Site → Asset → Device → Sensors
+   - Link sensors to Asset via Device relationship
+
+2. **API endpoints** should return sensors by Asset, not by Device:
+   ```python
+   # ✅ CORRECT
+   GET /api/assets/{asset_id}/sensors/
+   
+   # ❌ AVOID (unless specifically needed)
+   GET /api/devices/{device_id}/sensors/
+   ```
+
+**Frontend (React/TypeScript):**
+1. **Load sensors by Site or Asset**:
+   ```typescript
+   // ✅ CORRECT: Get all sensors from all assets in site
+   assetsService.getBySite(siteId)
+     .then(assets => {
+       return Promise.all(
+         assets.map(asset => assetsService.getSensors(asset.id))
+       );
+     });
+   
+   // ❌ AVOID: Load by device (shows only partial data)
+   devicesService.listBySite(siteId)
+     .then(devices => {
+       loadTelemetry(devices[0].mqtt_client_id); // Only ONE device!
+     });
+   ```
+
+2. **SensorsPage pattern**:
+   ```typescript
+   // Load ALL sensors from ALL assets of selected site
+   // This respects MQTT topic hierarchy
+   useEffect(() => {
+     if (!currentSite?.id) return;
+     
+     assetsService.getBySite(currentSite.id)
+       .then(response => {
+         const assets = response.results;
+         // For each asset, get its sensors (from ALL devices)
+         const sensorsPromises = assets.map(asset => 
+           assetsService.getSensors(asset.id)
+         );
+         return Promise.all(sensorsPromises);
+       });
+   }, [currentSite?.id]);
+   ```
+
+#### Auto-Creation Flow (MQTT → Database)
+
+```
+1. MQTT message arrives on topic:
+   tenants/umc/sites/UMC Hospital/assets/CHILLER-001/telemetry
+
+2. Ingest parser extracts:
+   - tenant: "umc"
+   - site: "UMC Hospital"
+   - asset: "CHILLER-001"
+   - device_id: (from payload or client_id)
+
+3. Auto-create if not exists:
+   ├─ Tenant (umc) ✅
+   ├─ Site (UMC Hospital) ✅
+   ├─ Asset (CHILLER-001) ✅
+   ├─ Device (gateway MAC address) ✅
+   └─ Sensors (temperature, humidity, etc.) ✅
+
+4. All sensors linked to Asset via Device
+   - Sensor.device → Device
+   - Device.asset → Asset
+   - Asset.site → Site
+```
+
+#### Benefits of Topic-Based Validation
+
+✅ **Automatic multi-device support:** Asset can have multiple gateways/controllers
+✅ **Hierarchical consistency:** Data organization mirrors physical infrastructure
+✅ **Scalability:** Add new devices without code changes
+✅ **Multi-tenant isolation:** Topic includes tenant slug
+✅ **Frontend simplicity:** Load by Site/Asset, not by individual devices
+
+#### Common Mistakes to Avoid
+
+❌ Loading sensors by `device_id` when you need ALL sensors of an asset
+❌ Hardcoding device selection (e.g., `devices[0]`)
+❌ Ignoring Asset hierarchy in favor of flat Device lists
+❌ Not using topic structure for auto-creation
+❌ Frontend showing partial data because it loads only one device
+
+#### Reference Implementation
+
+See:
+- **Backend:** `apps/ingest/views.py` (IngestView)
+- **Backend:** `apps/ingest/parsers/khomp_senml.py` (KhompSenMLParser)
+- **Frontend:** `src/components/pages/SensorsPage.tsx` (topic-based loading)
+- **Frontend:** `src/components/pages/AssetDetailsPage.tsx` (AssetTelemetry tab)
+
 ### URL Configuration
 
 **Public Schema:**
