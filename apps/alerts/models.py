@@ -318,12 +318,12 @@ class NotificationPreference(models.Model):
         """Retorna lista de canais de notificação habilitados"""
         channels = []
         if self.email_enabled:
-            channels.append('EMAIL')
+            channels.append('email')
         if self.push_enabled:
-            channels.append('IN_APP')
+            channels.append('push')
         if self.sms_enabled and self.phone_number:
-            channels.append('SMS')
+            channels.append('sms')
         if self.whatsapp_enabled and self.whatsapp_number:
-            channels.append('WHATSAPP')
+            channels.append('whatsapp')
         return channels
 

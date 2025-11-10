@@ -548,7 +548,7 @@ class SensorViewSet(viewsets.ModelViewSet):
         - tag, description
     
     Ordenação:
-        - tag, metric_type, last_reading, created_at (padrão: tag)
+        - tag, metric_type, last_reading_at, created_at (padrão: tag)
     """
     
     queryset = Sensor.objects.select_related(
@@ -560,7 +560,7 @@ class SensorViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['device', 'metric_type', 'unit', 'is_online']
     search_fields = ['tag', 'description']
-    ordering_fields = ['tag', 'metric_type', 'last_reading', 'created_at']
+    ordering_fields = ['tag', 'metric_type', 'last_reading_at', 'created_at']
     ordering = ['tag']
     
     def get_serializer_class(self):
@@ -586,7 +586,7 @@ class SensorViewSet(viewsets.ModelViewSet):
         
         Retorna:
             - last_value: Novo valor
-            - last_reading: Timestamp da leitura
+            - last_reading_at: Timestamp da leitura
             - is_online: Status atualizado
         """
         sensor = self.get_object()
@@ -617,6 +617,6 @@ class SensorViewSet(viewsets.ModelViewSet):
         
         return Response({
             'last_value': sensor.last_value,
-            'last_reading': sensor.last_reading,
+            'last_reading_at': sensor.last_reading_at,
             'is_online': sensor.is_online,
         })

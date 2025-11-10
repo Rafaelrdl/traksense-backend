@@ -406,7 +406,7 @@ class DeviceSummaryView(APIView):
         sql_stats = """
             SELECT COUNT(*) as total_readings,
                    COUNT(DISTINCT sensor_id) as sensor_count,
-                   EXTRACT(EPOCH FROM (MAX(ts) - MIN(ts))) / COUNT(*) as avg_interval_seconds
+                   EXTRACT(EPOCH FROM (MAX(ts) - MIN(ts))) / NULLIF(COUNT(*), 0) as avg_interval_seconds
             FROM reading
             WHERE device_id = %s
               AND ts >= %s
@@ -457,7 +457,7 @@ class DeviceSummaryView(APIView):
                 'unit': labels.get('unit', '') if isinstance(labels, dict) else '',
                 'is_online': is_online,
                 'last_value': reading_data['value'],
-                'last_reading': reading_ts.isoformat(),
+                'last_reading_at': reading_ts.isoformat(),
                 'statistics_24h': None,  # Will be filled below with SQL aggregates
             })
         
@@ -475,7 +475,7 @@ class DeviceSummaryView(APIView):
               AND ts >= %s
             GROUP BY sensor_id
         """
-        cursor.execute(stats_24h_sql, [device_id, stats_since])
+        cursor.execute(stats_24h_sql, [device_id, stats_window])
         stats_24h_rows = cursor.fetchall()
         stats_24h_columns = [desc[0] for desc in cursor.description]
         
@@ -510,11 +510,16 @@ class DeviceSummaryView(APIView):
         # Format statistics
         total_readings, sensor_count, avg_interval = stats_row
         avg_readings_per_hour = round((total_readings or 0) / 24, 2) if total_readings else 0
+        
+        # Tratar avg_interval None (pode acontecer com NULLIF ou sem leituras)
+        avg_interval_seconds = float(avg_interval) if avg_interval is not None else None
+        avg_interval_str = f"{int(avg_interval)}s" if avg_interval is not None else 'N/A'
+        
         statistics = {
             'total_readings_24h': total_readings or 0,
             'sensor_count': sensor_count or sensors_total,
-            'avg_interval': f"{int(avg_interval or 0)}s" if avg_interval else 'N/A',
-            'avg_interval_seconds': float(avg_interval) if avg_interval else None,
+            'avg_interval': avg_interval_str,
+            'avg_interval_seconds': avg_interval_seconds,
             'avg_readings_per_hour': avg_readings_per_hour,
             'sensors_total': sensors_total,
             'sensors_online': sensors_online,
