@@ -48,19 +48,47 @@ class RegisterView(generics.CreateAPIView):
     permission_classes = [AllowAny]
     
     def create(self, request, *args, **kwargs):
+        from django.db import connection
+        from apps.accounts.models import Membership
+        
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         
+        # 🆕 Criar TenantMembership automaticamente
+        # Novo usuário se torna admin do tenant onde se registrou
+        if connection.tenant:
+            Membership.objects.create(
+                user=user,
+                tenant=connection.tenant,
+                role='admin'  # Primeiro usuário é admin
+            )
+        
         # Generate tokens
         refresh = RefreshToken.for_user(user)
         
-        return Response({
+        # 🆕 Retornar tenant metadata (mesma estrutura do login)
+        tenant_info = None
+        if connection.tenant:
+            protocol = 'https' if request.is_secure() else 'http'
+            domain = request.get_host()
+            tenant_info = {
+                'slug': connection.schema_name,
+                'domain': domain,
+                'api_base_url': f"{protocol}://{domain}/api"
+            }
+        
+        response_data = {
             'user': UserSerializer(user).data,
             'access': str(refresh.access_token),
             'refresh': str(refresh),
             'message': 'Usuário registrado com sucesso!'
-        }, status=status.HTTP_201_CREATED)
+        }
+        
+        if tenant_info:
+            response_data['tenant'] = tenant_info
+        
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
 
 class LoginView(APIView):
@@ -294,6 +322,20 @@ class AvatarUploadView(APIView):
             if not minio_client.bucket_exists(bucket_name):
                 minio_client.make_bucket(bucket_name)
             
+            # 🆕 Deletar avatar antigo se existir
+            old_avatar_url = request.user.avatar
+            if old_avatar_url:
+                try:
+                    # Extrair o object key da URL antiga
+                    # URL format: http(s)://endpoint/bucket/path/to/file
+                    url_parts = old_avatar_url.split(f"/{bucket_name}/")
+                    if len(url_parts) > 1:
+                        old_object_key = url_parts[1]
+                        minio_client.remove_object(bucket_name, old_object_key)
+                except Exception as cleanup_error:
+                    # Não falhar se a limpeza falhar
+                    print(f"Warning: Failed to delete old avatar: {cleanup_error}")
+            
             # Generate unique filename
             file_extension = avatar_file.name.split('.')[-1]
             filename = f"avatars/{request.user.id}/{uuid.uuid4()}.{file_extension}"
@@ -307,8 +349,9 @@ class AvatarUploadView(APIView):
                 content_type=avatar_file.content_type,
             )
             
-            # Generate avatar URL
-            avatar_url = f"http://{settings.MINIO_ENDPOINT}/{bucket_name}/{filename}"
+            # 🆕 Generate avatar URL com protocolo correto
+            protocol = 'https' if getattr(settings, 'MINIO_USE_SSL', False) else 'http'
+            avatar_url = f"{protocol}://{settings.MINIO_ENDPOINT}/{bucket_name}/{filename}"
             
             # Update user avatar
             request.user.avatar = avatar_url
@@ -327,6 +370,21 @@ class AvatarUploadView(APIView):
     
     def delete(self, request):
         """Remove user avatar."""
+        # 🆕 Deletar arquivo do MinIO antes de remover do banco
+        old_avatar_url = request.user.avatar
+        if old_avatar_url:
+            try:
+                minio_client = get_minio_client()
+                bucket_name = settings.MINIO_BUCKET
+                # Extrair o object key da URL
+                url_parts = old_avatar_url.split(f"/{bucket_name}/")
+                if len(url_parts) > 1:
+                    old_object_key = url_parts[1]
+                    minio_client.remove_object(bucket_name, old_object_key)
+            except Exception as cleanup_error:
+                # Log mas não falhar a operação
+                print(f"Warning: Failed to delete avatar from storage: {cleanup_error}")
+        
         request.user.avatar = None
         request.user.save(update_fields=['avatar'])
         

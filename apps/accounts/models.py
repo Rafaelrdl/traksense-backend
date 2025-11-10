@@ -292,6 +292,13 @@ class Invite(models.Model):
         Raises:
             ValidationError: If invite is invalid
         """
+        # 🆕 Validar que o email do usuário corresponde ao convite
+        if user.email.lower() != self.email.lower():
+            raise ValidationError(
+                "This invite was sent to a different email address. "
+                f"Expected: {self.email}, but got: {user.email}"
+            )
+        
         if not self.is_valid:
             if self.is_expired:
                 self.status = 'expired'
