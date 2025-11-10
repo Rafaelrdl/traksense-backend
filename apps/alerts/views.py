@@ -51,7 +51,7 @@ class RuleViewSet(viewsets.ModelViewSet):
         
         severity = self.request.query_params.get('severity')
         if severity:
-            queryset = queryset.filter(severity=severity)
+            queryset = queryset.filter(severity__iexact=severity)  # 🔧 Case-insensitive (aceita CRITICAL ou Critical)
         
         equipment_id = self.request.query_params.get('equipment_id')
         if equipment_id:
@@ -133,7 +133,7 @@ class AlertViewSet(viewsets.ModelViewSet):
         
         severity = self.request.query_params.get('severity')
         if severity:
-            queryset = queryset.filter(severity=severity)
+            queryset = queryset.filter(severity__iexact=severity)  # 🔧 Case-insensitive (aceita CRITICAL ou Critical)
         
         rule_id = self.request.query_params.get('rule_id')
         if rule_id:

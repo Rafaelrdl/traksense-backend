@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime, timezone as dt_timezone
 
+from django.conf import settings
 from django.db import connection, transaction
 from django.utils import timezone as dj_timezone
 from django.utils.decorators import method_decorator
@@ -12,6 +13,7 @@ from rest_framework.views import APIView
 from apps.tenants.models import Tenant
 from .models import Telemetry, Reading
 from .parsers import parser_manager
+
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +48,15 @@ class IngestView(APIView):
         """
         Process incoming telemetry data from EMQX.
         """
-        logger.info("=" * 60)
-        logger.info("🔵 INGEST POST INICIADO")
-        logger.info(f"Headers: {dict(request.headers)}")
-        logger.info(f"Content-Type: {request.content_type}")
-        logger.info(f"📏 Body tamanho: {len(request.body)} bytes")
-        logger.info(f"Body COMPLETO: {request.body.decode('utf-8')}")
-        logger.info("=" * 60)
+        # 🔧 Only log verbose details in DEBUG mode
+        if settings.DEBUG:
+            logger.info("=" * 60)
+            logger.info("🔵 INGEST POST INICIADO")
+            logger.info(f"Headers: {dict(request.headers)}")
+            logger.info(f"Content-Type: {request.content_type}")
+            logger.info(f"📏 Body tamanho: {len(request.body)} bytes")
+            logger.info(f"Body COMPLETO: {request.body.decode('utf-8')}")
+            logger.info("=" * 60)
         
         # Extract tenant from header
         tenant_slug = request.headers.get('x-tenant')
@@ -62,8 +66,83 @@ class IngestView(APIView):
                 {"error": "Missing x-tenant header"},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        # Get tenant from public schema and switch to its schema
+
+        # Parse and validate payload BEFORE accessing database
+        try:
+            # Validate payload structure
+            if settings.DEBUG:
+                logger.info("🔍 Parseando JSON manualmente do request.body...")
+            import json
+            try:
+                raw_body = request.body.decode('utf-8')
+                if settings.DEBUG:
+                    logger.info(f"📏 Body completo ({len(raw_body)} chars): {raw_body}")
+                data = json.loads(raw_body)
+                if settings.DEBUG:
+                    logger.info(f"✅ JSON parseado com sucesso, tipo: {type(data)}")
+            except json.JSONDecodeError as e_json:
+                logger.error(f"❌ Erro ao parsear JSON: {e_json}", exc_info=True)
+                logger.error(f"JSON problemático: {raw_body}")
+                return Response(
+                    {"error": f"Erro ao parsear JSON: {str(e_json)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            except Exception as e_data:
+                logger.error(f"❌ Erro inesperado: {e_data}", exc_info=True)
+                return Response(
+                    {"error": f"Erro ao processar request: {str(e_data)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if settings.DEBUG:
+                logger.info(f"📥 Ingest received data: {data}")
+
+            if not isinstance(data, dict):
+                logger.warning(f"Invalid payload type: {type(data)}")
+                return Response(
+                    {"error": "Payload must be JSON object"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            topic = data.get('topic')
+            if not topic:
+                logger.warning("Missing required field: topic")
+                return Response(
+                    {"error": "Missing required field: topic"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # 🔒 SECURITY: Validate tenant from topic matches x-tenant header
+            # This validation happens BEFORE database access to prevent enumeration attacks
+            # Topic format: tenants/{slug}/sites/{site}/assets/{tag}/telemetry
+            topic_parts = topic.split('/')
+            if len(topic_parts) < 2 or topic_parts[0] != 'tenants':
+                logger.warning(f"Invalid topic format: {topic}")
+                return Response(
+                    {"error": "Invalid topic format"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            topic_tenant_slug = topic_parts[1]
+            if topic_tenant_slug != tenant_slug:
+                logger.error(
+                    f"🚨 SECURITY VIOLATION: Tenant mismatch! "
+                    f"Header: {tenant_slug}, Topic: {topic_tenant_slug}, "
+                    f"Client: {data.get('client_id')}, Full Topic: {topic}"
+                )
+                return Response(
+                    {"error": "Tenant validation failed"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        except Exception as e:
+            logger.error(f"❌ Erro ao validar payload: {e}", exc_info=True)
+            return Response(
+                {"error": "Invalid request"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # NOW we can safely access the database with validated tenant
         try:
             connection.set_schema_to_public()
             tenant = Tenant.objects.get(slug=tenant_slug)
@@ -100,45 +179,14 @@ class IngestView(APIView):
                 return value
             return fallback
 
+        # Continue processing with validated data and connected tenant
         try:
-            # Validate payload structure
-            logger.info("🔍 Parseando JSON manualmente do request.body...")
-            import json
-            try:
-                raw_body = request.body.decode('utf-8')
-                logger.info(f"📏 Body completo ({len(raw_body)} chars): {raw_body}")
-                data = json.loads(raw_body)
-                logger.info(f"✅ JSON parseado com sucesso, tipo: {type(data)}")
-            except json.JSONDecodeError as e_json:
-                logger.error(f"❌ Erro ao parsear JSON: {e_json}", exc_info=True)
-                logger.error(f"JSON problemático: {raw_body}")
-                return Response(
-                    {"error": f"Erro ao parsear JSON: {str(e_json)}"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            except Exception as e_data:
-                logger.error(f"❌ Erro inesperado: {e_data}", exc_info=True)
-                return Response(
-                    {"error": f"Erro ao processar request: {str(e_data)}"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            logger.info(f"📥 Ingest received data: {data}")
-
-            if not isinstance(data, dict):
-                logger.warning(f"Invalid payload type: {type(data)}")
-                return Response(
-                    {"error": "Payload must be JSON object"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
             client_id = data.get('client_id')
-            topic = data.get('topic')
             payload = data.get('payload')
             ts = data.get('ts')
 
-            if not all([topic, payload, ts]):
-                missing = [f for f in ['topic', 'payload', 'ts'] if not data.get(f)]
+            if not all([payload, ts]):
+                missing = [f for f in ['payload', 'ts'] if not data.get(f)]
                 logger.warning(f"Missing required fields: {missing}")
                 return Response(
                     {"error": f"Missing required fields: {', '.join(missing)}"},
@@ -165,17 +213,19 @@ class IngestView(APIView):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-            logger.info(f"🔍 Tentando encontrar parser para topic: {topic}")
-            logger.info(f"🔍 Tipo do payload: {type(payload)}")
-            logger.info(f"🔍 Payload preview: {str(payload)[:200]}")
+            if settings.DEBUG:
+                logger.info(f"🔍 Tentando encontrar parser para topic: {topic}")
+                logger.info(f"🔍 Tipo do payload: {type(payload)}")
+                logger.info(f"🔍 Payload preview: {str(payload)[:200]}")
             
             # IMPORTANTE: Passar o payload interno, não o data completo!
             parser = parser_manager.get_parser(payload, topic)
 
             if not parser:
                 logger.warning(f"⚠️ Nenhum parser encontrado para o payload. Topic: {topic}")
-                logger.warning(f"⚠️ Payload recebido: {payload}")
-                logger.warning(f"⚠️ Parsers disponíveis: {[p.__class__.__name__ for p in parser_manager._parsers]}")
+                if settings.DEBUG:
+                    logger.warning(f"⚠️ Payload recebido: {payload}")
+                    logger.warning(f"⚠️ Parsers disponíveis: {[p.__class__.__name__ for p in parser_manager._parsers]}")
                 return Response(
                     {"error": "Formato de payload não reconhecido"},
                     status=status.HTTP_400_BAD_REQUEST
@@ -184,8 +234,9 @@ class IngestView(APIView):
             try:
                 # IMPORTANTE: Passar o payload interno, não o data completo!
                 parsed_data = parser.parse(payload, topic)
-                logger.info(f"✅ Payload parseado com sucesso usando {parser.__class__.__name__}")
-                logger.info(f"📊 Device: {parsed_data['device_id']}, Sensors: {len(parsed_data['sensors'])}")
+                if settings.DEBUG:
+                    logger.info(f"✅ Payload parseado com sucesso usando {parser.__class__.__name__}")
+                    logger.info(f"📊 Device: {parsed_data['device_id']}, Sensors: {len(parsed_data['sensors'])}")
             except Exception as e:
                 logger.error(f"❌ Erro ao parsear payload: {e}", exc_info=True)
                 return Response(

@@ -179,8 +179,8 @@ AUTH_USER_MODEL = 'accounts.User'
 # Django REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
-    'PAGE_SIZE': 200,
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',  # 🔧 Mudado de LimitOffsetPagination para PageNumberPagination
+    'PAGE_SIZE': 50,  # 🔧 Reduzido de 200 para 50 (mais apropriado para paginação por página)
     'DEFAULT_FILTER_BACKENDS': [
         'django_filters.rest_framework.DjangoFilterBackend',
         'rest_framework.filters.SearchFilter',

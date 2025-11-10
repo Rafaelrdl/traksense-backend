@@ -32,6 +32,7 @@ def evaluate_rules_task():
     from apps.alerts.models import Rule
     from apps.alerts.services import NotificationService
     from apps.tenants.models import Tenant
+    from apps.assets.models import Sensor  # 🔧 Adicionar import do Sensor
     from django_tenants.utils import schema_context
     
     logger.info("Starting rule evaluation task...")
@@ -174,11 +175,18 @@ def evaluate_single_rule(rule):
                     )
                     continue
             
-            # Buscar o device do equipment para pegar o mqtt_client_id correto
-            device = rule.equipment.devices.first()
-            if not device:
+            # 🔧 Buscar o device correto através do sensor (não usar devices.first())
+            try:
+                sensor_obj = Sensor.objects.select_related('device').get(sensor_id=sensor_tag)
+                device = sensor_obj.device
+                if not device or not device.mqtt_client_id:
+                    logger.warning(
+                        f"No valid device/mqtt_client_id found for sensor {sensor_tag}"
+                    )
+                    continue
+            except Sensor.DoesNotExist:
                 logger.warning(
-                    f"No device found for equipment {rule.equipment.tag}"
+                    f"Sensor {sensor_tag} not found in database"
                 )
                 continue
             
@@ -190,7 +198,7 @@ def evaluate_single_rule(rule):
             if not latest_reading:
                 logger.debug(
                     f"No telemetry data found for equipment {rule.equipment.tag} "
-                    f"parameter {param.parameter_key}"
+                    f"parameter {param.parameter_key} (device: {device.mqtt_client_id})"
                 )
                 continue
             
@@ -262,6 +270,7 @@ def evaluate_single_rule_legacy(rule):
     """
     from apps.alerts.models import Alert
     from apps.ingest.models import Reading
+    from apps.assets.models import Sensor  # 🔧 Import necessário para buscar device correto
     
     # Check cooldown
     cooldown_period = timedelta(minutes=rule.duration)
@@ -277,15 +286,26 @@ def evaluate_single_rule_legacy(rule):
         return None
     
     try:
+        # 🔧 Buscar device correto via Sensor (não usar equipment.tag que não existe em Reading)
+        sensor_obj = Sensor.objects.select_related('device').filter(
+            sensor_id=rule.parameter_key
+        ).first()
+        
+        if not sensor_obj or not sensor_obj.device or not sensor_obj.device.mqtt_client_id:
+            logger.debug(
+                f"No valid sensor/device found for parameter_key {rule.parameter_key}"
+            )
+            return None
+        
         latest_reading = Reading.objects.filter(
-            device_id=rule.equipment.tag,
+            device_id=sensor_obj.device.mqtt_client_id,
             sensor_id=rule.parameter_key
         ).order_by('-ts').first()
         
         if not latest_reading:
             logger.debug(
                 f"No telemetry data found for equipment {rule.equipment.tag} "
-                f"parameter {rule.parameter_key}"
+                f"parameter {rule.parameter_key} (device: {sensor_obj.device.mqtt_client_id})"
             )
             return None
         
