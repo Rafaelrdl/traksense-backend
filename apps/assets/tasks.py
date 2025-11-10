@@ -54,7 +54,8 @@ def check_sensors_online_status(self):
         try:
             logger.info(f"  📊 Verificando tenant: {tenant.slug}")
             
-            with schema_context(tenant.slug):
+            # 🔧 Usar schema_name (não slug) - suporta tenants com hífen
+            with schema_context(tenant.schema_name):
                 from apps.assets.models import Sensor
                 
                 # Buscar todos os sensores ativos
@@ -150,7 +151,8 @@ def update_device_online_status(self):
         try:
             logger.info(f"  📊 Verificando tenant: {tenant.slug}")
             
-            with schema_context(tenant.slug):
+            # 🔧 Usar schema_name (não slug) - suporta tenants com hífen
+            with schema_context(tenant.schema_name):
                 from apps.assets.models import Device, Sensor
                 from django.db.models import Exists, OuterRef
                 

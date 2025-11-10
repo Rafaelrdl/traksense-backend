@@ -427,6 +427,24 @@ class DeviceSummaryView(APIView):
             # Statistics
             cursor.execute(sql_stats, [device_id, stats_window])
             stats_row = cursor.fetchone()
+            
+            # 🔧 Executar consulta de stats por sensor DENTRO do contexto
+            stats_24h_sql = """
+                SELECT 
+                    sensor_id,
+                    AVG(value) as avg_value,
+                    MIN(value) as min_value,
+                    MAX(value) as max_value,
+                    STDDEV(value) as stddev_value,
+                    COUNT(*) as count
+                FROM reading
+                WHERE device_id = %s
+                  AND ts >= %s
+                GROUP BY sensor_id
+            """
+            cursor.execute(stats_24h_sql, [device_id, stats_window])
+            stats_24h_rows = cursor.fetchall()
+            stats_24h_columns = [desc[0] for desc in cursor.description]
         
         # Convert to dicts
         sensors = []
@@ -461,24 +479,7 @@ class DeviceSummaryView(APIView):
                 'statistics_24h': None,  # Will be filled below with SQL aggregates
             })
         
-        # Calculate 24h statistics per sensor
-        stats_24h_sql = """
-            SELECT 
-                sensor_id,
-                AVG(value) as avg_value,
-                MIN(value) as min_value,
-                MAX(value) as max_value,
-                STDDEV(value) as stddev_value,
-                COUNT(*) as count
-            FROM reading
-            WHERE device_id = %s
-              AND ts >= %s
-            GROUP BY sensor_id
-        """
-        cursor.execute(stats_24h_sql, [device_id, stats_window])
-        stats_24h_rows = cursor.fetchall()
-        stats_24h_columns = [desc[0] for desc in cursor.description]
-        
+        # 🔧 stats_24h_rows já foi executada dentro do contexto do cursor acima
         # Build stats dict by sensor_id
         stats_by_sensor = {}
         for row in stats_24h_rows:

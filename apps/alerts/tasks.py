@@ -45,7 +45,8 @@ def evaluate_rules_task():
     
     for tenant in tenants:
         try:
-            with schema_context(tenant.slug):
+            # 🔧 Usar schema_name (não slug) - suporta tenants com hífen
+            with schema_context(tenant.schema_name):
                 # Get all enabled rules for this tenant
                 rules = Rule.objects.filter(enabled=True).select_related('equipment')
                 

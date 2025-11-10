@@ -47,10 +47,12 @@ def export_telemetry_async(self, export_job_id):
             raise Exception(f"Tenant {job.tenant_slug} not found")
         
         # Build query
-        with schema_context(tenant.slug):
-            from apps.ingest.models import TelemetryReading
+        # 🔧 Usar schema_name (não slug) - suporta tenants com hífen
+        with schema_context(tenant.schema_name):
+            # 🔧 Usar Reading (não TelemetryReading que não existe)
+            from apps.ingest.models import Reading
             
-            queryset = TelemetryReading.objects.all()
+            queryset = Reading.objects.all()
             
             if job.sensor_id:
                 queryset = queryset.filter(sensor_id=job.sensor_id)
