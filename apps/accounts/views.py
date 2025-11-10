@@ -48,28 +48,56 @@ class RegisterView(generics.CreateAPIView):
     permission_classes = [AllowAny]
     
     def create(self, request, *args, **kwargs):
+        """
+        ⚠️ SECURITY: Registration is restricted to the PUBLIC schema only.
+        Tenant-scoped registrations require a valid invitation token.
+        
+        This prevents attackers from self-registering as admin on any tenant domain.
+        """
         from django.db import connection
         from apps.accounts.models import Membership
+        
+        # 🔒 SECURITY CHECK: Only allow registration on public schema OR with invitation token
+        if connection.schema_name != 'public':
+            invitation_token = request.data.get('invitation_token')
+            if not invitation_token:
+                return Response(
+                    {
+                        "error": "Registration on tenant domains requires an invitation token",
+                        "detail": "Please contact your organization administrator for an invitation link"
+                    },
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # TODO: Validate invitation_token against Invitation model
+            # For now, reject all tenant-scoped registrations without proper invitation system
+            return Response(
+                {
+                    "error": "Invitation system not yet implemented",
+                    "detail": "Please register via the main site or contact support"
+                },
+                status=status.HTTP_501_NOT_IMPLEMENTED
+            )
         
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         
-        # 🆕 Criar TenantMembership automaticamente
-        # Novo usuário se torna admin do tenant onde se registrou
-        if connection.tenant:
+        # Create TenantMembership only if on tenant schema with valid invitation
+        # (currently unreachable due to security check above)
+        if connection.tenant and connection.schema_name != 'public':
             Membership.objects.create(
                 user=user,
                 tenant=connection.tenant,
-                role='admin'  # Primeiro usuário é admin
+                role='member'  # Default role is 'member', not 'admin'
             )
         
         # Generate tokens
         refresh = RefreshToken.for_user(user)
         
-        # 🆕 Retornar tenant metadata (mesma estrutura do login)
+        # Return tenant metadata (same structure as login)
         tenant_info = None
-        if connection.tenant:
+        if connection.tenant and connection.schema_name != 'public':
             protocol = 'https' if request.is_secure() else 'http'
             domain = request.get_host()
             tenant_info = {

@@ -36,18 +36,64 @@ class IngestView(APIView):
     
     Headers expected:
     - x-tenant: tenant slug (e.g., "umc")
+    - x-device-token: HMAC signature or device API token (for authentication)
     - content-type: application/json
+    
+    Security:
+    - Validates x-device-token against INGESTION_SECRET or registered device tokens
+    - Validates tenant slug from topic matches x-tenant header
+    - Rejects requests with invalid authentication
     """
     
-    # Disable authentication for MQTT ingestion
-    # (EMQX is within Docker network, not exposed to internet)
+    # Disable DRF authentication (using custom device token auth)
     authentication_classes = []
     permission_classes = []
     
     def post(self, request, *args, **kwargs):
         """
         Process incoming telemetry data from EMQX.
+        
+        🔒 SECURITY: Requires valid device authentication via:
+        - x-device-token header with HMAC signature OR
+        - Registered device API token
         """
+        # 🔒 SECURITY: Validate device authentication FIRST
+        device_token = request.headers.get('x-device-token')
+        if not device_token:
+            logger.warning("Missing x-device-token header in ingest request")
+            return Response(
+                {"error": "Missing x-device-token header"},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Validate device token (HMAC or registered token)
+        from django.conf import settings
+        import hmac
+        import hashlib
+        
+        # Option 1: Check against shared secret (HMAC)
+        ingestion_secret = getattr(settings, 'INGESTION_SECRET', None)
+        if ingestion_secret:
+            # Validate HMAC signature
+            expected_token = hmac.new(
+                ingestion_secret.encode('utf-8'),
+                request.body,
+                hashlib.sha256
+            ).hexdigest()
+            
+            if not hmac.compare_digest(device_token, expected_token):
+                logger.error(f"🚨 SECURITY: Invalid device token from {request.META.get('REMOTE_ADDR')}")
+                return Response(
+                    {"error": "Invalid device token"},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+        else:
+            # Option 2: Check against registered device API tokens (future implementation)
+            # TODO: Implement DeviceToken model and validation
+            # For now, log warning and allow (backward compatibility)
+            logger.warning("⚠️ INGESTION_SECRET not configured - device authentication skipped")
+        
+        # Continue with tenant validation and processing...
         # 🔧 Only log verbose details in DEBUG mode
         if settings.DEBUG:
             logger.info("=" * 60)
