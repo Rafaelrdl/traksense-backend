@@ -83,6 +83,8 @@ class AssetListSerializer(serializers.ModelSerializer):
             'asset_type',
             'status',
             'health_score',
+            'location_description',  # ✅ ADICIONADO
+            'specifications',         # ✅ ADICIONADO
             'device_count',
             'created_at',
             'updated_at',
