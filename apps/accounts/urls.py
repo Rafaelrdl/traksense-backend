@@ -4,7 +4,6 @@ URL Configuration for accounts app (authentication & user management).
 
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from rest_framework_simplejwt.views import TokenRefreshView
 
 from apps.accounts import views
 from apps.accounts.views_team import TeamMemberViewSet, InviteViewSet
@@ -24,7 +23,8 @@ urlpatterns = [
     path('auth/register/', views.RegisterView.as_view(), name='register'),
     path('auth/login/', views.LoginView.as_view(), name='login'),
     path('auth/logout/', views.LogoutView.as_view(), name='logout'),
-    path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    # 🔐 SECURITY: Use cookie-based token refresh (not standard TokenRefreshView)
+    path('auth/token/refresh/', views.CookieTokenRefreshView.as_view(), name='token_refresh'),
     
     # User profile
     path('users/me/', views.MeView.as_view(), name='me'),

@@ -221,7 +221,9 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.FormParser',
     ],
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        # 🔐 SECURITY FIX: Custom JWT authentication from HttpOnly cookies
+        # Protects against XSS by reading tokens from cookies instead of headers
+        'apps.common.authentication.JWTCookieAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',

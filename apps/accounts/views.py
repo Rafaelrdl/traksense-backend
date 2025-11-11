@@ -234,6 +234,70 @@ class LogoutView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
 
 
+class CookieTokenRefreshView(TokenRefreshView):
+    """
+    Custom Token Refresh View using HttpOnly cookies
+    
+    POST /api/auth/token/refresh/
+    
+    Security Strategy:
+    - Reads refresh_token from HttpOnly cookie (not request body)
+    - Returns new access_token in HttpOnly cookie (not JSON)
+    - Protects against XSS token theft
+    
+    This view extends simplejwt's TokenRefreshView to work with cookies
+    instead of JSON body, maintaining the same validation logic.
+    """
+    def post(self, request, *args, **kwargs):
+        # 🔐 Read refresh token from HttpOnly cookie (not request body)
+        refresh_token = request.COOKIES.get('refresh_token')
+        
+        if not refresh_token:
+            return Response({
+                'error': 'Refresh token not found in cookies',
+                'detail': 'Please login again'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Create a mutable copy of request.data and inject refresh token
+        # This maintains compatibility with parent class validation logic
+        from django.http import QueryDict
+        mutable_data = request.data.copy() if hasattr(request.data, 'copy') else QueryDict('', mutable=True)
+        mutable_data['refresh'] = refresh_token
+        
+        # Replace request.data with our mutable copy
+        request._full_data = mutable_data
+        
+        # Call parent's post() to validate and generate new access token
+        # This uses simplejwt's built-in token validation
+        response = super().post(request, *args, **kwargs)
+        
+        if response.status_code == 200:
+            # Extract new access token from response data
+            new_access_token = response.data.get('access')
+            
+            if new_access_token:
+                # 🔐 Set new access token as HttpOnly cookie (not JSON)
+                response.set_cookie(
+                    key='access_token',
+                    value=new_access_token,
+                    httponly=True,
+                    secure=not settings.DEBUG,
+                    samesite='Lax',
+                    max_age=3600,  # 1 hour
+                )
+                
+                # Remove token from JSON response (cookies only)
+                response.data = {
+                    'message': 'Token refreshed successfully',
+                    'detail': 'New access token set in HttpOnly cookie'
+                }
+                
+                if settings.DEBUG:
+                    print('✅ Token refresh successful (cookie-based)')
+        
+        return response
+
+
 class CustomTokenObtainPairView(TokenObtainPairView):
     """
     Custom token obtain view with user data.
