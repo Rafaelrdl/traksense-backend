@@ -154,10 +154,13 @@ class LoginView(APIView):
         protocol = 'https' if request.is_secure() else 'http'
         api_base_url = f"{protocol}://{tenant_domain}/api"
         
+        # 🔒 SECURITY FIX (Nov 2025): Do NOT return tokens in JSON response
+        # Tokens are already set as HttpOnly cookies - returning them in JSON
+        # defeats the purpose of HttpOnly (XSS protection)
+        # Audit finding: "Retorna os tokens access/refresh no JSON e também define 
+        # cookies HttpOnly. Isso duplica o transporte e enfraquece a segurança."
         response_data = {
             'user': UserSerializer(user).data,
-            'access': str(refresh.access_token),
-            'refresh': str(refresh),
             'message': 'Login realizado com sucesso!',
             # Multi-tenant information for frontend
             'tenant': {
@@ -165,12 +168,13 @@ class LoginView(APIView):
                 'domain': tenant_domain,
                 'api_base_url': api_base_url,
             }
+            # ❌ REMOVED: 'access' and 'refresh' tokens (use cookies only)
         }
         
-        # Create response with HttpOnly cookies
+        # Create response with HttpOnly cookies (ONLY authentication method)
         response = Response(response_data, status=status.HTTP_200_OK)
         
-        # Set cookies (optional - for cookie-based auth)
+        # Set HttpOnly cookies (cookie-based auth strategy)
         response.set_cookie(
             key='access_token',
             value=str(refresh.access_token),
@@ -256,7 +260,12 @@ class MeView(APIView):
         import logging
         logger = logging.getLogger(__name__)
         
-        logger.info(f"🔄 PATCH /api/users/me/ - Data recebida: {request.data}")
+        # 🔒 SECURITY FIX (Nov 2025): Do NOT log PII in production
+        # Audit finding: "Registra no log todo o payload do /api/users/me PATCH, 
+        # expondo telefones e bios nos logs."
+        # Conditional logging prevents compliance violations
+        if settings.DEBUG:
+            logger.debug(f"🔄 PATCH /api/users/me/ - Data recebida: {request.data}")
         
         serializer = UserUpdateSerializer(
             request.user,
@@ -386,8 +395,11 @@ class AvatarUploadView(APIView):
             request.user.avatar = avatar_url
             request.user.save(update_fields=['avatar'])
             
+            # 🔧 API FIX (Nov 2025): Return full user object (frontend expects {user: {...}})
+            # Audit finding: "Endpoints de upload/exclusão de avatar retornam apenas 
+            # {avatar, message} mas o frontend espera {user: {...}}."
             return Response({
-                'avatar': avatar_url,
+                'user': UserSerializer(request.user).data,
                 'message': 'Avatar atualizado com sucesso!'
             }, status=status.HTTP_200_OK)
             
@@ -417,7 +429,9 @@ class AvatarUploadView(APIView):
         request.user.avatar = None
         request.user.save(update_fields=['avatar'])
         
+        # 🔧 API FIX (Nov 2025): Return full user object (frontend expects {user: {...}})
         return Response({
+            'user': UserSerializer(request.user).data,
             'message': 'Avatar removido com sucesso!'
         }, status=status.HTTP_200_OK)
 

@@ -20,7 +20,15 @@ def evaluate_rules_task():
     """
     Periodic task that evaluates all enabled rules against current telemetry data.
     
-    This task should be scheduled to run at regular intervals (e.g., every 1-5 minutes).
+    ⚠️ KNOWN LIMITATION (Nov 2025):
+    This task evaluates ALL tenants sequentially in a single Celery worker.
+    A slow tenant can block others. Audit recommendation: "Dividir em tarefas por 
+    tenant ou processar em blocos (chunking)."
+    
+    FUTURE ENHANCEMENT:
+    - Split into per-tenant Celery tasks: evaluate_rules_for_tenant.delay(tenant_id)
+    - Use Celery groups/chords for parallel execution
+    - Add timeout per tenant (e.g., 30s max)
     
     For each rule:
     1. Get the latest telemetry data for the equipment
@@ -29,10 +37,11 @@ def evaluate_rules_task():
     4. Create alert if condition is met
     5. Send notifications to users
     """
+    import time
     from apps.alerts.models import Rule
     from apps.alerts.services import NotificationService
     from apps.tenants.models import Tenant
-    from apps.assets.models import Sensor  # 🔧 Adicionar import do Sensor
+    from apps.assets.models import Sensor
     from django_tenants.utils import schema_context
     
     logger.info("Starting rule evaluation task...")
@@ -47,6 +56,9 @@ def evaluate_rules_task():
     tenants = Tenant.objects.exclude(slug='public').all()
     
     for tenant in tenants:
+        # 🔧 MONITORING: Track per-tenant execution time to identify bottlenecks
+        tenant_start_time = time.time()
+        
         try:
             # 🔧 Usar schema_name (não slug) - suporta tenants com hífen
             with schema_context(tenant.schema_name):
@@ -107,6 +119,16 @@ def evaluate_rules_task():
             logger.error(f"Error processing tenant {tenant.slug}: {str(e)}")
             error_count += 1
             continue
+        finally:
+            # 🔧 MONITORING: Log per-tenant execution time (identify slow tenants)
+            tenant_duration = time.time() - tenant_start_time
+            if tenant_duration > 5.0:  # Warn if tenant takes >5s
+                logger.warning(
+                    f"⚠️ Slow tenant detected: {tenant.slug} took {tenant_duration:.2f}s "
+                    f"to evaluate {rules.count() if 'rules' in locals() else 0} rules"
+                )
+            else:
+                logger.debug(f"Tenant {tenant.slug} evaluated in {tenant_duration:.2f}s")
     
     logger.info(
         f"Rule evaluation completed: "
@@ -147,20 +169,37 @@ def evaluate_single_rule(rule):
     
     # 🔧 PERFORMANCE FIX: Prefetch related data to avoid N+1 queries
     # Load all sensors with their devices in one query
+    # 🔧 PERFORMANCE FIX (Nov 2025): Extract sensor tags and prefetch in one query
+    # Audit finding: "Faz Sensor.objects.get() dentro de um loop, ignorando o 
+    # sensors_dict já criado."
     sensor_tags = []
+    sensor_id_to_tag = {}  # Map sensor_X IDs to tags
+    
     for param in parameters:
         sensor_tag = param.parameter_key
         if param.parameter_key.startswith('sensor_'):
             try:
                 sensor_id = int(param.parameter_key.replace('sensor_', ''))
-                sensor = Sensor.objects.filter(pk=sensor_id).values_list('tag', flat=True).first()
-                if sensor:
-                    sensor_tag = sensor
-            except (ValueError, Sensor.DoesNotExist):
+                # Store for later mapping
+                sensor_id_to_tag[sensor_id] = param.parameter_key
+                # Will be resolved after prefetch
+                sensor_tag = None
+            except ValueError:
                 pass
-        sensor_tags.append(sensor_tag)
+        if sensor_tag:
+            sensor_tags.append(sensor_tag)
     
-    # Prefetch all sensors with devices in one query
+    # Prefetch sensors by ID if needed
+    if sensor_id_to_tag:
+        sensors_by_id = {
+            s.id: s.tag 
+            for s in Sensor.objects.filter(id__in=sensor_id_to_tag.keys()).only('id', 'tag')
+        }
+        for sensor_id, param_key in sensor_id_to_tag.items():
+            if sensor_id in sensors_by_id:
+                sensor_tags.append(sensors_by_id[sensor_id])
+    
+    # Prefetch all sensors with devices in ONE query (eliminates N+1)
     sensors_dict = {
         sensor.tag: sensor 
         for sensor in Sensor.objects.filter(tag__in=sensor_tags).select_related('device')
@@ -185,26 +224,26 @@ def evaluate_single_rule(rule):
             )
             continue
     
-        # Buscar sensor no dicionário prefetchado
+        # ✅ FIXED: Use prefetched sensors_dict (no more queries in loop)
         sensor_tag = param.parameter_key
         if param.parameter_key.startswith('sensor_'):
             try:
                 sensor_id = int(param.parameter_key.replace('sensor_', ''))
-                sensor = Sensor.objects.filter(pk=sensor_id).first()
-                if sensor:
-                    sensor_tag = sensor.tag
+                # Get from prefetched map (not DB query)
+                if sensor_id in sensors_by_id:
+                    sensor_tag = sensors_by_id[sensor_id]
                 else:
                     logger.warning(
                         f"Sensor ID {sensor_id} not found for parameter_key {param.parameter_key}"
                     )
                     continue
-            except (ValueError, Sensor.DoesNotExist):
+            except (ValueError, KeyError):
                 logger.warning(
                     f"Could not parse sensor ID from parameter_key: {param.parameter_key}"
                 )
                 continue
         
-        # 🔧 Usar sensor prefetchado do dicionário
+        # ✅ Use sensor prefetched from dictionary (O(1) lookup, no DB query)
         sensor_obj = sensors_dict.get(sensor_tag)
         if not sensor_obj or not sensor_obj.device or not sensor_obj.device.mqtt_client_id:
             logger.warning(

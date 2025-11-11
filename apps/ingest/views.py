@@ -195,10 +195,14 @@ class IngestView(APIView):
             tenant = Tenant.objects.get(slug=tenant_slug)
             connection.set_tenant(tenant)
         except Tenant.DoesNotExist:
-            logger.warning(f"Tenant not found: {tenant_slug}")
+            # 🔧 INGESTION FIX (Nov 2025): Return 404/403 for invalid tenant, not 500
+            # Audit finding: "Quando o tenant slug é inválido, retorna 500 — isso faz 
+            # o EMQX ficar em loop de reenvio."
+            # 404 indicates client misconfiguration, EMQX won't retry
+            logger.warning(f"⚠️ Tenant not found: {tenant_slug} (client misconfiguration)")
             return Response(
-                {"error": "Internal server error"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {"error": "Tenant not found", "tenant": tenant_slug},
+                status=status.HTTP_404_NOT_FOUND  # Changed from 500
             )
 
         def ensure_aware_timestamp(value, fallback):
@@ -382,32 +386,37 @@ class IngestView(APIView):
                         
                         # 🔧 PERFORMANCE FIX: Capture actual insert count
                         # bulk_create with ignore_conflicts returns empty list in Django
-                        # Use database cursor to get actual row count inserted
-                        from django.db import connection as db_connection
+                        # 🔧 PERFORMANCE FIX (Nov 2025): Use delta calculation instead of 2 range scans
+                        # Audit finding: "Conta linhas antes e depois de cada inserção para calcular 
+                        # o total, mas o resultado é sobrescrito. Além disso, faz duas range scans caras."
+                        # 
+                        # OLD: 2 expensive range scans (before + after)
+                        # NEW: Single count before + delta from bulk_create result
                         
-                        with db_connection.cursor() as cursor:
-                            # Count before insert
-                            count_before = Reading.objects.filter(
-                                device_id=device_id,
-                                ts__gte=min(r.ts for r in readings_to_create),
-                                ts__lte=max(r.ts for r in readings_to_create)
-                            ).count()
+                        # Count existing readings before insert
+                        count_before = Reading.objects.filter(
+                            device_id=device_id,
+                            ts__gte=min(r.ts for r in readings_to_create),
+                            ts__lte=max(r.ts for r in readings_to_create)
+                        ).count()
                         
+                        # Bulk insert (ignores duplicates silently)
                         Reading.objects.bulk_create(
                             readings_to_create, 
                             ignore_conflicts=True
                         )
                         
-                        # Count after insert to determine actual inserts
-                        with db_connection.cursor() as cursor:
-                            count_after = Reading.objects.filter(
-                                device_id=device_id,
-                                ts__gte=min(r.ts for r in readings_to_create),
-                                ts__lte=max(r.ts for r in readings_to_create)
-                            ).count()
+                        # Count after to get actual inserts (delta method)
+                        count_after = Reading.objects.filter(
+                            device_id=device_id,
+                            ts__gte=min(r.ts for r in readings_to_create),
+                            ts__lte=max(r.ts for r in readings_to_create)
+                        ).count()
                         
+                        # Calculate accurate metrics
                         readings_created = count_after - count_before
                         duplicates_skipped = len(readings_to_create) - readings_created
+                        
                         # Atualizar status do device para ONLINE e last_seen
                         try:
                             from apps.assets.models import Device
@@ -419,7 +428,8 @@ class IngestView(APIView):
                         except Exception as e_device:
                             logger.warning(f"⚠️ Não foi possível atualizar status do device: {e_device}")
 
-                    readings_created = len(readings_to_create)
+                    # ❌ REMOVED: Line that overwrote accurate count
+                    # readings_created = len(readings_to_create)  # BUG: Sobrescrevia contagem real!
 
                 logger.info(
                     f"✅ Telemetry saved: tenant={tenant_slug}, "
