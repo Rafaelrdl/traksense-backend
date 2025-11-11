@@ -296,9 +296,10 @@ def evaluate_single_rule_legacy(rule):
         return None
     
     try:
-        # 🔧 Buscar device correto via Sensor (não usar equipment.tag que não existe em Reading)
+        # 🔧 CORRIGIDO: Buscar sensor por tag (não por sensor_id que não existe no modelo)
+        # parameter_key contém o tag do sensor
         sensor_obj = Sensor.objects.select_related('device').filter(
-            sensor_id=rule.parameter_key
+            tag=rule.parameter_key
         ).first()
         
         if not sensor_obj or not sensor_obj.device or not sensor_obj.device.mqtt_client_id:
@@ -307,6 +308,7 @@ def evaluate_single_rule_legacy(rule):
             )
             return None
         
+        # Buscar a leitura mais recente usando o tag do sensor
         latest_reading = Reading.objects.filter(
             device_id=sensor_obj.device.mqtt_client_id,
             sensor_id=rule.parameter_key

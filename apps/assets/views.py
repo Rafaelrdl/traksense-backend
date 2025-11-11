@@ -71,6 +71,22 @@ class SiteViewSet(viewsets.ModelViewSet):
     ordering_fields = ['name', 'company', 'created_at']
     ordering = ['name']
     
+    def get_queryset(self):
+        """
+        🔧 PERFORMANCE FIX: Annotate asset_count to avoid N+1 queries in serializer.
+        """
+        from django.db.models import Count, Q
+        queryset = super().get_queryset()
+        
+        # Annotate with active asset count (used by SiteSerializer.get_asset_count)
+        queryset = queryset.annotate(
+            active_asset_count=Count(
+                'assets',
+                filter=Q(assets__status__in=['OPERATIONAL', 'WARNING', 'MAINTENANCE'])
+            )
+        )
+        return queryset
+    
     @action(detail=True, methods=['get'])
     def assets(self, request, pk=None):
         """
@@ -259,6 +275,20 @@ class AssetViewSet(viewsets.ModelViewSet):
     search_fields = ['tag', 'name', 'manufacturer', 'model', 'serial_number']
     ordering_fields = ['tag', 'name', 'status', 'health_score', 'created_at']
     ordering = ['tag']
+    
+    def get_queryset(self):
+        """
+        🔧 PERFORMANCE FIX: Annotate device_count and sensor_count to avoid N+1 queries.
+        """
+        from django.db.models import Count
+        queryset = super().get_queryset()
+        
+        # Annotate counts for AssetListSerializer and AssetSerializer
+        queryset = queryset.annotate(
+            total_device_count=Count('devices', distinct=True),
+            total_sensor_count=Count('devices__sensors', distinct=True)
+        )
+        return queryset
     
     def get_serializer_class(self):
         """
@@ -465,13 +495,27 @@ class DeviceViewSet(viewsets.ModelViewSet):
         Registra um heartbeat do device (atualiza last_seen).
         
         POST /api/devices/{id}/heartbeat/
+        Body (optional): { "timestamp": "2025-01-01T12:00:00Z" }
         
         Retorna:
             - last_seen: Timestamp atualizado
             - is_online: Status online do device
         """
+        from django.utils import timezone
+        from dateutil import parser as date_parser
+        
         device = self.get_object()
-        device.update_status()
+        
+        # Extract timestamp from payload if provided
+        timestamp = None
+        if request.data and 'timestamp' in request.data:
+            try:
+                timestamp = date_parser.isoparse(request.data['timestamp'])
+            except (ValueError, TypeError):
+                timestamp = timezone.now()
+        
+        # Update device status to ONLINE with timestamp
+        device.update_status('ONLINE', timestamp=timestamp)
         
         return Response({
             'last_seen': device.last_seen,

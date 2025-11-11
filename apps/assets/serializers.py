@@ -50,7 +50,14 @@ class SiteSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at', 'asset_count', 'full_name']
     
     def get_asset_count(self, obj):
-        """Retorna o número de ativos ativos neste site."""
+        """
+        Retorna o número de ativos ativos neste site.
+        🔧 PERFORMANCE: Uses annotated 'active_asset_count' from viewset if available.
+        """
+        # Try to use pre-computed annotation first (from viewset)
+        if hasattr(obj, 'active_asset_count'):
+            return obj.active_asset_count
+        # Fallback to query (for cases where annotation isn't available)
         return obj.assets.filter(status__in=['OPERATIONAL', 'WARNING', 'MAINTENANCE']).count()
 
 
@@ -138,11 +145,21 @@ class AssetSerializer(serializers.ModelSerializer):
         ]
     
     def get_device_count(self, obj):
-        """Retorna o número de dispositivos conectados a este ativo."""
+        """
+        Retorna o número de dispositivos conectados a este ativo.
+        🔧 PERFORMANCE: Uses annotated 'total_device_count' from viewset if available.
+        """
+        if hasattr(obj, 'total_device_count'):
+            return obj.total_device_count
         return obj.devices.count()
     
     def get_sensor_count(self, obj):
-        """Retorna o número total de sensores em todos os dispositivos."""
+        """
+        Retorna o número total de sensores conectados (via devices).
+        🔧 PERFORMANCE: Uses annotated 'total_sensor_count' from viewset if available.
+        """
+        if hasattr(obj, 'total_sensor_count'):
+            return obj.total_sensor_count
         return Sensor.objects.filter(device__asset=obj).count()
     
     def validate_tag(self, value):

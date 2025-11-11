@@ -263,12 +263,14 @@ class NotificationService:
             
             logger.info(
                 f"SMS would be sent to {preferences.phone_number} "
-                f"for alert {alert.id}"
+                f"for alert {alert.id} (mock implementation)"
             )
             
+            # Return 'skipped' status until real provider is integrated
             return {
-                'sent': True,
-                'message': f'SMS queued for {preferences.phone_number}'
+                'sent': False,
+                'skipped': True,
+                'reason': 'SMS provider not integrated - mock implementation'
             }
             
         except Exception as e:
@@ -315,12 +317,14 @@ class NotificationService:
             
             logger.info(
                 f"WhatsApp message would be sent to {preferences.whatsapp_number} "
-                f"for alert {alert.id}"
+                f"for alert {alert.id} (mock implementation)"
             )
             
+            # Return 'skipped' status until real provider is integrated
             return {
-                'sent': True,
-                'message': f'WhatsApp message queued for {preferences.whatsapp_number}'
+                'sent': False,
+                'skipped': True,
+                'reason': 'WhatsApp provider not integrated - mock implementation'
             }
             
         except Exception as e:

@@ -169,7 +169,75 @@ ALLOWED_HOSTS=umc.production.com,acme.production.com
 
 ---
 
-## 📦 Project Structure
+## � RECENT FIXES: Architecture & Performance (Nov 2025)
+
+**⚠️ CRITICAL UPDATES - Additional fixes beyond security audit:**
+
+### Backend Fixes (8 additional corrections)
+
+1. **✅ Device Heartbeat Handler**
+   - File: `apps/assets/views.py:472`
+   - Fix: Pass `new_status='ONLINE'` and optional `timestamp` to `device.update_status()`
+   - Impact: Fixes TypeError on all POST /api/devices/{id}/heartbeat/ requests
+
+2. **✅ Legacy Rules Sensor Lookup**
+   - File: `apps/alerts/tasks.py:301`
+   - Fix: Changed `Sensor.objects.filter(sensor_id=...)` to `filter(tag=...)`
+   - Impact: Legacy alert rules now trigger correctly (sensor_id field doesn't exist)
+
+3. **✅ INGESTION_SECRET Enforcement**
+   - File: `apps/ingest/views.py:69-96`
+   - Fix: Return 401 if INGESTION_SECRET not configured (was just logging warning)
+   - Impact: Prevents unauthorized telemetry ingestion in production
+
+4. **✅ SMS/WhatsApp Mock Status**
+   - File: `apps/alerts/services/notification_service.py:232-309`
+   - Fix: Return `'skipped': True` instead of `'sent': True` for mock implementations
+   - Impact: Accurate compliance reporting until real providers integrated
+
+5. **✅ Redundant exists() Checks**
+   - File: `apps/ingest/views.py:359-386`
+   - Fix: Removed `.exists()` checks before `bulk_create(..., ignore_conflicts=True)`
+   - Impact: Reduces N database roundtrips per ingestion batch
+
+6. **✅ N+1 Query Optimization**
+   - Files: `apps/assets/views.py` + `apps/assets/serializers.py`
+   - Fix: Added `annotate()` in viewsets for asset_count, device_count, sensor_count
+   - Impact: Serializers use pre-computed annotations instead of per-object queries
+
+7. **✅ Asset History Pagination**
+   - File: `apps/ingest/api_views_extended.py:660-703`
+   - Fix: Added MAX_RAW_RESULTS (10k) and MAX_AGG_RESULTS (2k) limits
+   - Impact: Prevents memory exhaustion with large time ranges
+
+8. **✅ Force Unique Secrets**
+   - File: `config/settings/base.py:19, 324-327`
+   - Fix: Validate SECRET_KEY and MINIO credentials at startup
+   - Impact: Production deployments must use unique secrets (no defaults)
+
+### Required Actions After Deployment
+
+**Environment Variables:**
+```bash
+DJANGO_SECRET_KEY=<100_hex_chars>  # Generate with: secrets.token_hex(50)
+INGESTION_SECRET=<64_hex_chars>    # Generate with: secrets.token_hex(32)
+MINIO_ACCESS_KEY=<unique_value>    # Do not use 'minioadmin'
+MINIO_SECRET_KEY=<unique_value>    # Do not use 'minioadmin123'
+DEBUG=False
+```
+
+**Validation Checklist:**
+- [ ] All device heartbeats succeed (no TypeError)
+- [ ] Legacy alert rules evaluate correctly
+- [ ] Telemetry ingestion requires valid INGESTION_SECRET
+- [ ] SMS/WhatsApp notifications show as "skipped" in logs
+- [ ] Asset list API loads in <500ms for 1000+ assets
+- [ ] History API truncates with warning for large ranges
+- [ ] Production secrets validated at startup
+
+---
+
+## �📦 Project Structure
 
 ```
 traksense-backend/

@@ -664,10 +664,16 @@ class AssetTelemetryHistoryView(APIView):
         if sensor_ids:
             queryset = queryset.filter(sensor_id__in=sensor_ids)
         
+        # 🔧 PERFORMANCE FIX: Add pagination to prevent memory issues with large datasets
+        # Limit results to prevent killing worker with month+ of raw data
+        MAX_RAW_RESULTS = 10000  # ~10k readings max for raw data
+        MAX_AGG_RESULTS = 2000   # ~2k buckets max for aggregated data
+        
         # Get data
         if interval == 'raw':
-            # Return raw data
-            data = list(queryset.values('sensor_id', 'ts', 'value').order_by('sensor_id', 'ts'))
+            # Return raw data with limit
+            queryset = queryset.order_by('sensor_id', 'ts')[:MAX_RAW_RESULTS]
+            data = list(queryset.values('sensor_id', 'ts', 'value'))
             
             # Format for frontend
             result = []
@@ -677,8 +683,17 @@ class AssetTelemetryHistoryView(APIView):
                     'ts': reading['ts'].isoformat(),
                     'value': reading['value']
                 })
+            
+            # Warn if limit was reached
+            if len(result) >= MAX_RAW_RESULTS:
+                return Response({
+                    'data': result,
+                    'warning': f'Result truncated to {MAX_RAW_RESULTS} readings. Use aggregation intervals (1m, 5m, 15m, 1h) for larger time ranges.',
+                    'truncated': True,
+                    'limit': MAX_RAW_RESULTS
+                }, status=status.HTTP_200_OK)
         else:
-            # Aggregate data using time_bucket
+            # Aggregate data using time_bucket with limit
             interval_map = {
                 '1m': '1 minute',
                 '5m': '5 minutes',
@@ -702,6 +717,7 @@ class AssetTelemetryHistoryView(APIView):
                   AND (%s IS NULL OR sensor_id = ANY(%s))
                 GROUP BY sensor_id, bucket
                 ORDER BY sensor_id, bucket
+                LIMIT %s
             """
             
             with connection.cursor() as cursor:
@@ -711,7 +727,8 @@ class AssetTelemetryHistoryView(APIView):
                     ts_from,
                     ts_to,
                     None if not sensor_ids else sensor_ids,
-                    sensor_ids or []
+                    sensor_ids or [],
+                    MAX_AGG_RESULTS  # Add limit to query
                 ])
                 columns = [col[0] for col in cursor.description]
                 rows = cursor.fetchall()
@@ -727,6 +744,15 @@ class AssetTelemetryHistoryView(APIView):
                     'max_value': float(row_dict['max_value']) if row_dict['max_value'] is not None else None,
                     'count': row_dict['count']
                 })
+            
+            # Warn if limit was reached for aggregated data
+            if len(result) >= MAX_AGG_RESULTS:
+                return Response({
+                    'data': result,
+                    'warning': f'Result truncated to {MAX_AGG_RESULTS} buckets. Use coarser intervals (15m, 1h) for larger time ranges.',
+                    'truncated': True,
+                    'limit': MAX_AGG_RESULTS
+                }, status=status.HTTP_200_OK)
         
         logger.info(f"✅ Found {len(result)} data points for asset {asset_tag}")
         

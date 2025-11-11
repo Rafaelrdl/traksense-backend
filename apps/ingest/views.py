@@ -71,27 +71,28 @@ class IngestView(APIView):
         import hmac
         import hashlib
         
-        # Option 1: Check against shared secret (HMAC)
+        # SECURITY: INGESTION_SECRET is REQUIRED
         ingestion_secret = getattr(settings, 'INGESTION_SECRET', None)
-        if ingestion_secret:
-            # Validate HMAC signature
-            expected_token = hmac.new(
-                ingestion_secret.encode('utf-8'),
-                request.body,
-                hashlib.sha256
-            ).hexdigest()
-            
-            if not hmac.compare_digest(device_token, expected_token):
-                logger.error(f"🚨 SECURITY: Invalid device token from {request.META.get('REMOTE_ADDR')}")
-                return Response(
-                    {"error": "Invalid device token"},
-                    status=status.HTTP_401_UNAUTHORIZED
-                )
-        else:
-            # Option 2: Check against registered device API tokens (future implementation)
-            # TODO: Implement DeviceToken model and validation
-            # For now, log warning and allow (backward compatibility)
-            logger.warning("⚠️ INGESTION_SECRET not configured - device authentication skipped")
+        if not ingestion_secret:
+            logger.error("🚨 SECURITY: INGESTION_SECRET not configured - rejecting ingestion")
+            return Response(
+                {"error": "Server configuration error - authentication unavailable"},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Validate HMAC signature
+        expected_token = hmac.new(
+            ingestion_secret.encode('utf-8'),
+            request.body,
+            hashlib.sha256
+        ).hexdigest()
+        
+        if not hmac.compare_digest(device_token, expected_token):
+            logger.error(f"🚨 SECURITY: Invalid device token from {request.META.get('REMOTE_ADDR')}")
+            return Response(
+                {"error": "Invalid device token"},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
         
         # Continue with tenant validation and processing...
         # 🔧 Only log verbose details in DEBUG mode
@@ -356,14 +357,10 @@ class IngestView(APIView):
 
                         reading_timestamp = ensure_aware_timestamp(sensor.get('timestamp'), base_timestamp)
 
-                        if Reading.objects.filter(
-                            device_id=device_id,
-                            sensor_id=sensor_id,
-                            ts=reading_timestamp
-                        ).exists():
-                            duplicates_skipped += 1
-                            continue
-
+                        # 🔧 PERFORMANCE FIX: Remove redundant .exists() check
+                        # bulk_create with ignore_conflicts=True already handles duplicates
+                        # This .exists() causes N database roundtrips for each sensor
+                        
                         readings_to_create.append(
                             Reading(
                                 device_id=device_id,
@@ -382,7 +379,13 @@ class IngestView(APIView):
                         # 🔒 SECURITY FIX #4: Use ignore_conflicts to prevent race condition
                         # Concurrent ingestions can violate unique constraint (device_id, sensor_id, ts)
                         # Instead of dropping entire batch on IntegrityError, silently skip duplicates
-                        Reading.objects.bulk_create(readings_to_create, ignore_conflicts=True)
+                        created_count = Reading.objects.bulk_create(
+                            readings_to_create, 
+                            ignore_conflicts=True
+                        )
+                        # Note: ignore_conflicts returns empty list in Django, so we can't count actual inserts
+                        # But we can report the attempt count
+                        readings_created = len(readings_to_create)
                         
                         # Atualizar status do device para ONLINE e last_seen
                         try:

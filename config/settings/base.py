@@ -16,8 +16,34 @@ load_dotenv()
 # Build paths inside the project
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
+# ============================================================================
+# 🔒 SECURITY: Validate critical secrets
+# ============================================================================
+
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'dev-secret-key-change-in-production')
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY')
+
+if not SECRET_KEY:
+    raise ValueError(
+        "🚨 SECURITY: DJANGO_SECRET_KEY environment variable is required!\n"
+        "Generate one with: python -c 'import secrets; print(secrets.token_hex(50))'\n"
+        "Add to .env: DJANGO_SECRET_KEY=<generated_key>"
+    )
+
+# Warn if using default/weak secret
+INSECURE_SECRETS = [
+    'dev-secret-key-change-in-production',
+    'django-insecure-',
+    'change-me',
+    'secret',
+]
+if any(weak in SECRET_KEY.lower() for weak in INSECURE_SECRETS):
+    import warnings
+    warnings.warn(
+        "⚠️ SECURITY WARNING: Detected weak SECRET_KEY! "
+        "Generate a new one with: python -c 'import secrets; print(secrets.token_hex(50))'",
+        RuntimeWarning
+    )
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
@@ -322,10 +348,27 @@ CELERY_BEAT_SCHEDULE = {
 
 # MinIO / S3
 MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'minio:9000')
-MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY', 'minioadmin')
-MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY', 'minioadmin123')
+MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
+MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
 MINIO_BUCKET = os.getenv('MINIO_BUCKET', 'files')
 MINIO_USE_SSL = os.getenv('MINIO_USE_SSL', 'False') == 'True'
+
+# 🔒 SECURITY: Validate MinIO credentials if not in DEBUG mode
+if not DEBUG:
+    if not MINIO_ACCESS_KEY or MINIO_ACCESS_KEY == 'minioadmin':
+        raise ValueError(
+            "🚨 SECURITY: MINIO_ACCESS_KEY must be set to a unique value in production!\n"
+            "Do not use 'minioadmin' in production. Generate secure credentials."
+        )
+    if not MINIO_SECRET_KEY or MINIO_SECRET_KEY == 'minioadmin123':
+        raise ValueError(
+            "🚨 SECURITY: MINIO_SECRET_KEY must be set to a unique value in production!\n"
+            "Do not use 'minioadmin123' in production. Generate secure credentials."
+        )
+else:
+    # Use defaults in development only
+    MINIO_ACCESS_KEY = MINIO_ACCESS_KEY or 'minioadmin'
+    MINIO_SECRET_KEY = MINIO_SECRET_KEY or 'minioadmin123'
 
 # EMQX / MQTT
 EMQX_URL = os.getenv('EMQX_URL', 'mqtt://emqx:1883')
