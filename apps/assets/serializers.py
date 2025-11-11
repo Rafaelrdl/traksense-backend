@@ -198,6 +198,7 @@ class DeviceListSerializer(serializers.ModelSerializer):
     asset_tag = serializers.CharField(source='asset.tag', read_only=True)
     sensor_count = serializers.SerializerMethodField()
     is_online = serializers.SerializerMethodField()
+    display_name = serializers.SerializerMethodField()
     
     class Meta:
         model = Device
@@ -205,6 +206,7 @@ class DeviceListSerializer(serializers.ModelSerializer):
             'id',
             'name',
             'serial_number',
+            'display_name',  # Nome curto para exibição (sufixo do serial)
             'mqtt_client_id',  # 🆕 IMPORTANTE: Necessário para telemetria
             'asset',
             'asset_tag',
@@ -215,7 +217,7 @@ class DeviceListSerializer(serializers.ModelSerializer):
             'last_seen',
             'created_at',
         ]
-        read_only_fields = ['id', 'sensor_count', 'is_online', 'created_at']
+        read_only_fields = ['id', 'sensor_count', 'is_online', 'display_name', 'created_at']
     
     def get_sensor_count(self, obj):
         """Retorna o número de sensores neste dispositivo."""
@@ -224,6 +226,20 @@ class DeviceListSerializer(serializers.ModelSerializer):
     def get_is_online(self, obj):
         """Retorna True se o device estiver com status ONLINE."""
         return obj.status == 'ONLINE'
+    
+    def get_display_name(self, obj):
+        """
+        Retorna nome curto para exibição usando apenas sufixo do serial number.
+        
+        Exemplos:
+            F80332010002C857 -> C857
+            F8033208000308B2 -> 08B2
+        
+        Regra: Últimos 4 caracteres do serial_number
+        """
+        if obj.serial_number and len(obj.serial_number) > 4:
+            return f"Device {obj.serial_number[-4:]}"
+        return obj.name or obj.serial_number
 
 
 class DeviceSerializer(serializers.ModelSerializer):
@@ -313,6 +329,7 @@ class SensorListSerializer(serializers.ModelSerializer):
     """
     
     device_name = serializers.CharField(source='device.name', read_only=True)
+    device_display_name = serializers.SerializerMethodField()  # Nome curto do device
     asset_tag = serializers.CharField(source='device.asset.tag', read_only=True)
     device_mqtt_client_id = serializers.CharField(source='device.mqtt_client_id', read_only=True)
     device_serial = serializers.CharField(source='device.serial_number', read_only=True)
@@ -324,6 +341,7 @@ class SensorListSerializer(serializers.ModelSerializer):
             'tag',
             'device',
             'device_name',
+            'device_display_name',  # Nome curto para exibição
             'device_serial',
             'device_mqtt_client_id',
             'asset_tag',
@@ -337,6 +355,7 @@ class SensorListSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id',
             'device_name',
+            'device_display_name',
             'device_serial',
             'device_mqtt_client_id',
             'asset_tag',
@@ -344,6 +363,23 @@ class SensorListSerializer(serializers.ModelSerializer):
             'last_reading_at',
             'created_at'
         ]
+    
+    def get_device_display_name(self, obj):
+        """
+        Retorna nome curto do device usando apenas sufixo do serial number.
+        
+        Exemplos:
+            F80332010002C857 -> Device C857
+            F8033208000308B2 -> Device 08B2
+        
+        Regra: Últimos 4 caracteres do serial_number
+        """
+        if obj.device and obj.device.serial_number:
+            serial = obj.device.serial_number
+            if len(serial) > 4:
+                return f"Device {serial[-4:]}"
+            return serial
+        return obj.device.name if obj.device else "N/A"
 
 
 class SensorSerializer(serializers.ModelSerializer):
@@ -352,6 +388,7 @@ class SensorSerializer(serializers.ModelSerializer):
     
     Campos adicionais:
         - device_name: Nome do dispositivo (read-only)
+        - device_display_name: Nome curto do dispositivo (sufixo) (read-only)
         - device_serial: Serial do dispositivo (read-only)
         - asset_tag: Tag do ativo (read-only)
         - asset_name: Nome do ativo (read-only)
@@ -359,11 +396,12 @@ class SensorSerializer(serializers.ModelSerializer):
         - availability: Percentual de disponibilidade (read-only)
     
     Campos read-only:
-        - id, device_name, device_serial, asset_tag, asset_name, site_name,
+        - id, device_name, device_display_name, device_serial, asset_tag, asset_name, site_name,
           is_online, last_reading, availability, created_at, updated_at
     """
     
     device_name = serializers.CharField(source='device.name', read_only=True)
+    device_display_name = serializers.SerializerMethodField()  # Nome curto
     device_serial = serializers.CharField(source='device.serial_number', read_only=True)
     device_mqtt_client_id = serializers.CharField(source='device.mqtt_client_id', read_only=True)
     asset_tag = serializers.CharField(source='device.asset.tag', read_only=True)
@@ -378,6 +416,7 @@ class SensorSerializer(serializers.ModelSerializer):
             'tag',
             'device',
             'device_name',
+            'device_display_name',  # Nome curto para exibição
             'device_serial',
             'device_mqtt_client_id',
             'asset_tag',
@@ -420,6 +459,23 @@ class SensorSerializer(serializers.ModelSerializer):
             else:
                 return 50.0
         return None
+    
+    def get_device_display_name(self, obj):
+        """
+        Retorna nome curto do device usando apenas sufixo do serial number.
+        
+        Exemplos:
+            F80332010002C857 -> Device C857
+            F8033208000308B2 -> Device 08B2
+        
+        Regra: Últimos 4 caracteres do serial_number
+        """
+        if obj.device and obj.device.serial_number:
+            serial = obj.device.serial_number
+            if len(serial) > 4:
+                return f"Device {serial[-4:]}"
+            return serial
+        return obj.device.name if obj.device else "N/A"
     
     def validate(self, data):
         """Validações adicionais do modelo."""
@@ -581,6 +637,7 @@ class DeviceSummarySerializer(serializers.ModelSerializer):
     """
     
     variables = serializers.SerializerMethodField()
+    display_name = serializers.SerializerMethodField()  # Nome curto do device
     total_variables_count = serializers.SerializerMethodField()
     online_variables_count = serializers.SerializerMethodField()
     device_status = serializers.SerializerMethodField()
@@ -591,6 +648,7 @@ class DeviceSummarySerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'name',
+            'display_name',  # Nome curto para exibição (sufixo)
             'serial_number',
             'mqtt_client_id',
             'device_type',
@@ -623,6 +681,20 @@ class DeviceSummarySerializer(serializers.ModelSerializer):
         """
         sensors = obj.sensors.all().order_by('metric_type', 'tag')
         return SensorVariableSerializer(sensors, many=True).data
+    
+    def get_display_name(self, obj):
+        """
+        Retorna nome curto do device usando apenas sufixo do serial number.
+        
+        Exemplos:
+            F80332010002C857 -> Device C857
+            F8033208000308B2 -> Device 08B2
+        
+        Regra: Últimos 4 caracteres do serial_number
+        """
+        if obj.serial_number and len(obj.serial_number) > 4:
+            return f"Device {obj.serial_number[-4:]}"
+        return obj.name or obj.serial_number
     
     def get_total_variables_count(self, obj):
         """Retorna o número total de variáveis/sensores."""

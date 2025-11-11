@@ -564,8 +564,8 @@ class Sensor(models.Model):
     # Unidade de medida
     unit = models.CharField(
         'Unidade',
-        max_length=20,
-        help_text='Unidade de medida (ex: °C, kW, Pa, %, RPM)'
+        max_length=50,  # Aumentado de 20 para 50 para suportar unidades como "meters_per_second"
+        help_text='Unidade de medida (ex: °C, kW, Pa, %, RPM, m/s2, meters_per_second)'
     )
     
     # Thresholds e limites (JSON)

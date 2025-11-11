@@ -66,29 +66,18 @@ class IngestView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED
             )
         
-        # Validate device token (HMAC or registered token)
+        # Validate device token
         from django.conf import settings
-        import hmac
-        import hashlib
         
-        # SECURITY: INGESTION_SECRET is REQUIRED
+        # SECURITY: Check if token matches INGESTION_SECRET (global token for EMQX)
         ingestion_secret = getattr(settings, 'INGESTION_SECRET', None)
-        if not ingestion_secret:
-            logger.error("🚨 SECURITY: INGESTION_SECRET not configured - rejecting ingestion")
-            return Response(
-                {"error": "Server configuration error - authentication unavailable"},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-        
-        # Validate HMAC signature
-        expected_token = hmac.new(
-            ingestion_secret.encode('utf-8'),
-            request.body,
-            hashlib.sha256
-        ).hexdigest()
-        
-        if not hmac.compare_digest(device_token, expected_token):
+        if ingestion_secret and device_token == ingestion_secret:
+            logger.info(f"✅ Authenticated via INGESTION_SECRET from {request.META.get('REMOTE_ADDR')}")
+        else:
+            # Token inválido
             logger.error(f"🚨 SECURITY: Invalid device token from {request.META.get('REMOTE_ADDR')}")
+            logger.error(f"   Received: {device_token[:20]}...")
+            logger.error(f"   Expected: {ingestion_secret[:20] if ingestion_secret else 'NOT_CONFIGURED'}...")
             return Response(
                 {"error": "Invalid device token"},
                 status=status.HTTP_401_UNAUTHORIZED
