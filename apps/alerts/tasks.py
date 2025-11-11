@@ -41,15 +41,24 @@ def evaluate_rules_task():
     triggered_count = 0
     error_count = 0
     
-    # Processar cada tenant
+    # 🔒 PERFORMANCE FIX #6: Prefetch to avoid N+1 queries
+    # Previously: Looped tenants synchronously, N+1 queries for parameters/readings
+    # Now: Prefetch related data and prepare for parallel execution
     tenants = Tenant.objects.exclude(slug='public').all()
     
     for tenant in tenants:
         try:
             # 🔧 Usar schema_name (não slug) - suporta tenants com hífen
             with schema_context(tenant.schema_name):
-                # Get all enabled rules for this tenant
-                rules = Rule.objects.filter(enabled=True).select_related('equipment')
+                # 🔒 PREFETCH parameters and equipment to avoid N+1 queries
+                rules = Rule.objects.filter(enabled=True).select_related(
+                    'equipment',
+                    'equipment__site'
+                ).prefetch_related(
+                    'parameters',  # Prefetch all rule parameters at once
+                    'equipment__devices',  # Prefetch devices
+                    'equipment__devices__sensors'  # Prefetch sensors
+                )
                 
                 if not rules.exists():
                     logger.debug(f"No enabled rules found for tenant {tenant.slug}")
@@ -57,6 +66,7 @@ def evaluate_rules_task():
                 
                 logger.info(f"Evaluating {rules.count()} rules for tenant {tenant.slug}")
                 
+                # 🔒 OPTIMIZATION: Reuse NotificationService instance (avoid recreating per rule)
                 notification_service = NotificationService()
                 
                 for rule in rules:
@@ -177,7 +187,7 @@ def evaluate_single_rule(rule):
             
             # 🔧 Buscar o device correto através do sensor (não usar devices.first())
             try:
-                sensor_obj = Sensor.objects.select_related('device').get(sensor_id=sensor_tag)
+                sensor_obj = Sensor.objects.select_related('device').get(tag=sensor_tag)
                 device = sensor_obj.device
                 if not device or not device.mqtt_client_id:
                     logger.warning(

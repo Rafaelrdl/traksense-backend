@@ -269,6 +269,13 @@ SIMPLE_JWT = {
 # Redis
 REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379/0')
 
+# 🔒 SECURITY: MQTT Ingestion Authentication
+# INGESTION_SECRET is used for HMAC signature validation on /ingest endpoint
+# Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+INGESTION_SECRET = os.getenv('INGESTION_SECRET', None)
+if not INGESTION_SECRET and not DEBUG:
+    raise ValueError('INGESTION_SECRET must be set in production environment')
+
 # Celery Configuration
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL

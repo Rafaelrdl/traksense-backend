@@ -379,7 +379,10 @@ class IngestView(APIView):
                         )
 
                     if readings_to_create:
-                        Reading.objects.bulk_create(readings_to_create)
+                        # 🔒 SECURITY FIX #4: Use ignore_conflicts to prevent race condition
+                        # Concurrent ingestions can violate unique constraint (device_id, sensor_id, ts)
+                        # Instead of dropping entire batch on IntegrityError, silently skip duplicates
+                        Reading.objects.bulk_create(readings_to_create, ignore_conflicts=True)
                         
                         # Atualizar status do device para ONLINE e last_seen
                         try:
@@ -530,9 +533,14 @@ class IngestView(APIView):
                     logger.warning(f"⚠️ Site '{site_name}' não encontrado. Ignorando auto-criação.")
                     return None
             else:
-                site = Site.objects.filter(is_active=True).first()
-                if site:
-                    logger.info(f"📍 Usando site padrão: {site.name}")
+                # 🔒 SECURITY FIX #5: Reject missing site metadata instead of guessing
+                # Previously used .first() which silently attached devices to arbitrary sites,
+                # corrupting the asset hierarchy and breaking tenant isolation
+                logger.error(
+                    f"❌ Missing site metadata in topic for asset {asset_tag}. "
+                    f"Topic MUST encode site: tenants/{{tenant}}/sites/{{site}}/assets/{{asset}}/telemetry"
+                )
+                return None
             
             if not site:
                 logger.error("❌ Nenhum site disponível para vincular o asset")

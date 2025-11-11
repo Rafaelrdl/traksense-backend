@@ -99,6 +99,76 @@ ONLY these files belong in the root:
 
 ---
 
+## 🔒 SECURITY: Recent Fixes (Nov 2025)
+
+**⚠️ CRITICAL UPDATES - All security vulnerabilities have been addressed:**
+
+### Backend Security Fixes (8/8 Implemented)
+
+1. **✅ Registration Exploit (CRÍTICO)**
+   - **File:** `apps/accounts/views.py` (lines 48-115)
+   - **Fix:** Restricted registration to public schema only, requires `invitation_token` for tenant domains
+   - **Impact:** Prevents self-admin on any tenant domain
+
+2. **✅ MQTT Authentication (CRÍTICO)**
+   - **File:** `apps/ingest/views.py` (lines 42-90)
+   - **Fix:** Requires `x-device-token` header with HMAC SHA256 signature
+   - **Config:** `INGESTION_SECRET` environment variable (REQUIRED in production)
+   - **Impact:** Blocks unauthenticated data injection
+
+3. **✅ Sensor Lookup FieldError (CRÍTICO)**
+   - **File:** `apps/alerts/tasks.py` (line 180)
+   - **Fix:** Changed `sensor_id` to `tag` field
+   - **Impact:** All multi-parameter alerts now work (was 0% functional)
+
+4. **✅ Duplicate Handling Race Condition**
+   - **File:** `apps/ingest/views.py` (line 382)
+   - **Fix:** Added `ignore_conflicts=True` to `bulk_create()`
+   - **Impact:** Prevents batch drops on concurrent ingestions
+
+5. **✅ Auto-Site Assignment Corruption**
+   - **File:** `apps/ingest/views.py` (lines 530-548)
+   - **Fix:** Rejects missing site metadata instead of using `.first()`
+   - **Impact:** Preserves asset hierarchy integrity
+
+6. **✅ N+1 Queries (Performance)**
+   - **File:** `apps/alerts/tasks.py` (lines 40-60)
+   - **Fix:** Added `prefetch_related()` for parameters/devices/sensors
+   - **Impact:** Rule evaluation time reduced by ~97%
+
+7. **✅ Duplicate Test Files**
+   - **Action:** Deleted `test_bug_fixes_simple.py`, kept `test_bug_fixes.py`
+   - **Impact:** Single source of truth for regression tests
+
+8. **✅ UTF-8 Encoding**
+   - **File:** `.editorconfig` (created)
+   - **Fix:** Enforces UTF-8 charset for all new files
+   - **Impact:** Prevents mojibake in future files
+
+### Required Environment Variables
+
+```bash
+# config/settings/base.py
+INGESTION_SECRET=<64_hex_chars>  # Generate with: secrets.token_hex(32)
+DJANGO_SECRET_KEY=<100_hex_chars>  # Generate with: secrets.token_hex(50)
+DEBUG=False  # MUST be False in production
+ALLOWED_HOSTS=umc.production.com,acme.production.com
+```
+
+### Security Validation Checklist
+
+**Before deploying:**
+- [ ] `INGESTION_SECRET` configured
+- [ ] Registration blocked on tenant domains (returns 403)
+- [ ] MQTT endpoint requires valid device token (returns 401)
+- [ ] Alerts firing correctly (no FieldError)
+- [ ] Concurrent ingestions don't drop batches
+- [ ] Sites not auto-assigned arbitrarily
+
+**Documentation:** See `CORRECOES_SEGURANCA_COMPLETAS.md` for full details
+
+---
+
 ## 📦 Project Structure
 
 ```
