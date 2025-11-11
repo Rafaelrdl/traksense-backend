@@ -379,14 +379,35 @@ class IngestView(APIView):
                         # 🔒 SECURITY FIX #4: Use ignore_conflicts to prevent race condition
                         # Concurrent ingestions can violate unique constraint (device_id, sensor_id, ts)
                         # Instead of dropping entire batch on IntegrityError, silently skip duplicates
-                        created_count = Reading.objects.bulk_create(
+                        
+                        # 🔧 PERFORMANCE FIX: Capture actual insert count
+                        # bulk_create with ignore_conflicts returns empty list in Django
+                        # Use database cursor to get actual row count inserted
+                        from django.db import connection as db_connection
+                        
+                        with db_connection.cursor() as cursor:
+                            # Count before insert
+                            count_before = Reading.objects.filter(
+                                device_id=device_id,
+                                ts__gte=min(r.ts for r in readings_to_create),
+                                ts__lte=max(r.ts for r in readings_to_create)
+                            ).count()
+                        
+                        Reading.objects.bulk_create(
                             readings_to_create, 
                             ignore_conflicts=True
                         )
-                        # Note: ignore_conflicts returns empty list in Django, so we can't count actual inserts
-                        # But we can report the attempt count
-                        readings_created = len(readings_to_create)
                         
+                        # Count after insert to determine actual inserts
+                        with db_connection.cursor() as cursor:
+                            count_after = Reading.objects.filter(
+                                device_id=device_id,
+                                ts__gte=min(r.ts for r in readings_to_create),
+                                ts__lte=max(r.ts for r in readings_to_create)
+                            ).count()
+                        
+                        readings_created = count_after - count_before
+                        duplicates_skipped = len(readings_to_create) - readings_created
                         # Atualizar status do device para ONLINE e last_seen
                         try:
                             from apps.assets.models import Device

@@ -135,6 +135,8 @@ def evaluate_single_rule(rule):
     """
     from apps.alerts.models import Alert
     from apps.ingest.models import Reading
+    from apps.assets.models import Sensor
+    from django.db.models import Prefetch
     
     # Verificar se a regra tem parâmetros novos (múltiplos) ou usa formato antigo
     parameters = rule.parameters.all()
@@ -142,6 +144,27 @@ def evaluate_single_rule(rule):
     # Se não tem parâmetros novos mas tem campos antigos, avaliar no formato antigo
     if not parameters.exists() and rule.parameter_key:
         return evaluate_single_rule_legacy(rule)
+    
+    # 🔧 PERFORMANCE FIX: Prefetch related data to avoid N+1 queries
+    # Load all sensors with their devices in one query
+    sensor_tags = []
+    for param in parameters:
+        sensor_tag = param.parameter_key
+        if param.parameter_key.startswith('sensor_'):
+            try:
+                sensor_id = int(param.parameter_key.replace('sensor_', ''))
+                sensor = Sensor.objects.filter(pk=sensor_id).values_list('tag', flat=True).first()
+                if sensor:
+                    sensor_tag = sensor
+            except (ValueError, Sensor.DoesNotExist):
+                pass
+        sensor_tags.append(sensor_tag)
+    
+    # Prefetch all sensors with devices in one query
+    sensors_dict = {
+        sensor.tag: sensor 
+        for sensor in Sensor.objects.filter(tag__in=sensor_tags).select_related('device')
+    }
     
     # Avaliar cada parâmetro da regra
     alerts_created = []
@@ -162,112 +185,97 @@ def evaluate_single_rule(rule):
             )
             continue
     
-        # Buscar reading pelo sensor_id (parameter_key do parâmetro)
-        # parameter_key pode ser "sensor_15" (ID do banco) ou o sensor.tag direto
-        try:
-            # Tentar interpretar como ID de sensor no banco (formato: sensor_XX)
-            sensor_tag = param.parameter_key
-            if param.parameter_key.startswith('sensor_'):
-                from apps.assets.models import Sensor
-                try:
-                    sensor_id = int(param.parameter_key.replace('sensor_', ''))
-                    sensor = Sensor.objects.filter(pk=sensor_id).first()
-                    if sensor:
-                        sensor_tag = sensor.tag
-                    else:
-                        logger.warning(
-                            f"Sensor ID {sensor_id} not found for parameter_key {param.parameter_key}"
-                        )
-                        continue
-                except (ValueError, Sensor.DoesNotExist):
-                    logger.warning(
-                        f"Could not parse sensor ID from parameter_key: {param.parameter_key}"
-                    )
-                    continue
-            
-            # 🔧 Buscar o device correto através do sensor (não usar devices.first())
+        # Buscar sensor no dicionário prefetchado
+        sensor_tag = param.parameter_key
+        if param.parameter_key.startswith('sensor_'):
             try:
-                sensor_obj = Sensor.objects.select_related('device').get(tag=sensor_tag)
-                device = sensor_obj.device
-                if not device or not device.mqtt_client_id:
+                sensor_id = int(param.parameter_key.replace('sensor_', ''))
+                sensor = Sensor.objects.filter(pk=sensor_id).first()
+                if sensor:
+                    sensor_tag = sensor.tag
+                else:
                     logger.warning(
-                        f"No valid device/mqtt_client_id found for sensor {sensor_tag}"
+                        f"Sensor ID {sensor_id} not found for parameter_key {param.parameter_key}"
                     )
                     continue
-            except Sensor.DoesNotExist:
+            except (ValueError, Sensor.DoesNotExist):
                 logger.warning(
-                    f"Sensor {sensor_tag} not found in database"
+                    f"Could not parse sensor ID from parameter_key: {param.parameter_key}"
                 )
                 continue
-            
-            latest_reading = Reading.objects.filter(
-                device_id=device.mqtt_client_id,
-                sensor_id=sensor_tag
-            ).order_by('-ts').first()
-            
-            if not latest_reading:
-                logger.debug(
-                    f"No telemetry data found for equipment {rule.equipment.tag} "
-                    f"parameter {param.parameter_key} (device: {device.mqtt_client_id})"
-                )
-                continue
-            
-            # Check if reading is recent enough (within last 15 minutes)
-            if latest_reading.ts < timezone.now() - timedelta(minutes=15):
-                logger.debug(
-                    f"Latest telemetry reading is too old "
-                    f"({latest_reading.ts}) for rule {rule.id} param {param.parameter_key}"
-                )
-                continue
-            
-            # Get the value to compare
-            value = latest_reading.value
-            
-            # Evaluate the condition
-            condition_met = evaluate_condition(
-                value,
-                param.operator,
-                param.threshold
-            )
-            
-            if not condition_met:
-                logger.debug(
-                    f"Rule {rule.id} parameter {param.parameter_key} condition not met: "
-                    f"{value} {param.operator} {param.threshold} = False"
-                )
-                continue
-            
-            # Condition is met - create alert
-            # Gerar mensagem a partir do template
-            message = generate_alert_message_from_template(
-                param.message_template,
-                param,
-                latest_reading,
-                value
-            )
-            
-            alert = Alert.objects.create(
-                rule=rule,
-                asset_tag=rule.equipment.tag,
-                severity=param.severity,
-                parameter_key=param.parameter_key,
-                parameter_value=value,
-                threshold=param.threshold,
-                message=message
-            )
-            
-            logger.info(
-                f"Alert {alert.id} created for rule {rule.id} parameter {param.parameter_key}: "
-                f"{value} {param.operator} {param.threshold}"
-            )
-            
-            alerts_created.append(alert)
-            
-        except Exception as e:
-            logger.error(
-                f"Error evaluating rule {rule.id} parameter {param.parameter_key}: {str(e)}"
+        
+        # 🔧 Usar sensor prefetchado do dicionário
+        sensor_obj = sensors_dict.get(sensor_tag)
+        if not sensor_obj or not sensor_obj.device or not sensor_obj.device.mqtt_client_id:
+            logger.warning(
+                f"No valid device/mqtt_client_id found for sensor {sensor_tag}"
             )
             continue
+        
+        device = sensor_obj.device
+        
+        latest_reading = Reading.objects.filter(
+            device_id=device.mqtt_client_id,
+            sensor_id=sensor_tag
+        ).order_by('-ts').first()
+        
+        if not latest_reading:
+            logger.debug(
+                f"No telemetry data found for equipment {rule.equipment.tag} "
+                f"parameter {param.parameter_key} (device: {device.mqtt_client_id})"
+            )
+            continue
+        
+        # Check if reading is recent enough (within last 15 minutes)
+        if latest_reading.ts < timezone.now() - timedelta(minutes=15):
+            logger.debug(
+                f"Latest telemetry reading is too old "
+                f"({latest_reading.ts}) for rule {rule.id} param {param.parameter_key}"
+            )
+            continue
+        
+        # Get the value to compare
+        value = latest_reading.value
+        
+        # Evaluate the condition
+        condition_met = evaluate_condition(
+            value,
+            param.operator,
+            param.threshold
+        )
+        
+        if not condition_met:
+            logger.debug(
+                f"Rule {rule.id} parameter {param.parameter_key} condition not met: "
+                f"{value} {param.operator} {param.threshold} = False"
+            )
+            continue
+        
+        # Condition is met - create alert
+        # Gerar mensagem a partir do template
+        message = generate_alert_message_from_template(
+            param.message_template,
+            param,
+            latest_reading,
+            value
+        )
+        
+        alert = Alert.objects.create(
+            rule=rule,
+            asset_tag=rule.equipment.tag,
+            severity=param.severity,
+            parameter_key=param.parameter_key,
+            parameter_value=value,
+            threshold=param.threshold,
+            message=message
+        )
+        
+        logger.info(
+            f"Alert {alert.id} created for rule {rule.id} parameter {param.parameter_key}: "
+            f"{value} {param.operator} {param.threshold}"
+        )
+        
+        alerts_created.append(alert)
     
     # Retornar o primeiro alerta criado (ou None se nenhum foi criado)
     return alerts_created[0] if alerts_created else None

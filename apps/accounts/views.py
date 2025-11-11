@@ -55,7 +55,7 @@ class RegisterView(generics.CreateAPIView):
         This prevents attackers from self-registering as admin on any tenant domain.
         """
         from django.db import connection
-        from apps.accounts.models import Membership
+        from apps.accounts.models import TenantMembership
         
         # 🔒 SECURITY CHECK: Only allow registration on public schema OR with invitation token
         if connection.schema_name != 'public':
@@ -86,7 +86,7 @@ class RegisterView(generics.CreateAPIView):
         # Create TenantMembership only if on tenant schema with valid invitation
         # (currently unreachable due to security check above)
         if connection.tenant and connection.schema_name != 'public':
-            Membership.objects.create(
+            TenantMembership.objects.create(
                 user=user,
                 tenant=connection.tenant,
                 role='member'  # Default role is 'member', not 'admin'
@@ -137,7 +137,8 @@ class LoginView(APIView):
         
         user = serializer.validated_data['user']
         
-        # Update last login IP
+        # Update last login timestamp and IP
+        user.last_login = timezone.now()
         user.last_login_ip = self.get_client_ip(request)
         user.save(update_fields=['last_login_ip', 'last_login'])
         

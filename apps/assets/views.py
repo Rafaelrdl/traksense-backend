@@ -205,37 +205,40 @@ class SiteViewSet(viewsets.ModelViewSet):
             - online_devices: Dispositivos online
             - online_sensors: Sensores online
         """
+        from django.db.models import Count, Q
+        
         site = self.get_object()
-        assets = site.assets.all()
         
-        # Estatísticas de assets
+        # Estatísticas de assets (usando agregação no banco)
+        assets_by_status = Asset.objects.filter(site=site).values('status').annotate(
+            count=Count('id')
+        ).order_by('status')
+        
+        assets_by_type = Asset.objects.filter(site=site).values('asset_type').annotate(
+            count=Count('id')
+        ).order_by('asset_type')
+        
+        # Estatísticas de devices e sensors (usando aggregate)
+        device_stats = Device.objects.filter(asset__site=site).aggregate(
+            total=Count('id'),
+            online=Count('id', filter=Q(is_online=True))
+        )
+        
+        sensor_stats = Sensor.objects.filter(device__asset__site=site).aggregate(
+            total=Count('id'),
+            online=Count('id', filter=Q(is_online=True))
+        )
+        
+        # Montar resposta
         stats = {
-            'total_assets': assets.count(),
-            'assets_by_status': {},
-            'assets_by_type': {},
-            'total_devices': 0,
-            'total_sensors': 0,
-            'online_devices': 0,
-            'online_sensors': 0,
+            'total_assets': sum(item['count'] for item in assets_by_status),
+            'assets_by_status': {item['status']: item['count'] for item in assets_by_status},
+            'assets_by_type': {item['asset_type']: item['count'] for item in assets_by_type},
+            'total_devices': device_stats['total'] or 0,
+            'online_devices': device_stats['online'] or 0,
+            'total_sensors': sensor_stats['total'] or 0,
+            'online_sensors': sensor_stats['online'] or 0,
         }
-        
-        # Contagem por status
-        for asset in assets:
-            status_key = asset.status
-            stats['assets_by_status'][status_key] = stats['assets_by_status'].get(status_key, 0) + 1
-            
-            # Contagem por tipo
-            type_key = asset.asset_type
-            stats['assets_by_type'][type_key] = stats['assets_by_type'].get(type_key, 0) + 1
-        
-        # Estatísticas de devices e sensors
-        devices = Device.objects.filter(asset__site=site)
-        stats['total_devices'] = devices.count()
-        stats['online_devices'] = devices.filter(is_online=True).count()
-        
-        sensors = Sensor.objects.filter(device__asset__site=site)
-        stats['total_sensors'] = sensors.count()
-        stats['online_sensors'] = sensors.filter(is_online=True).count()
         
         return Response(stats)
 

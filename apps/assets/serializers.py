@@ -466,18 +466,25 @@ class SensorBulkCreateSerializer(serializers.Serializer):
     sensors = SensorSerializer(many=True)
     
     def create(self, validated_data):
-        """Cria múltiplos sensores."""
+        """Cria múltiplos sensores em uma transação atômica."""
+        from django.db import transaction
+        
         device = self.context.get('device')
         if not device:
             raise serializers.ValidationError("Device não fornecido no contexto.")
         
         sensors_data = validated_data.get('sensors', [])
-        sensors = []
         
-        for sensor_data in sensors_data:
-            sensor_data['device'] = device
-            sensor = Sensor.objects.create(**sensor_data)
-            sensors.append(sensor)
+        # Usar transação atômica para garantir consistência
+        with transaction.atomic():
+            # Preparar lista de sensores para bulk_create
+            sensors_to_create = []
+            for sensor_data in sensors_data:
+                sensor_data['device'] = device
+                sensors_to_create.append(Sensor(**sensor_data))
+            
+            # Criar todos de uma vez (reduz round-trips ao banco)
+            sensors = Sensor.objects.bulk_create(sensors_to_create)
         
         return sensors
 

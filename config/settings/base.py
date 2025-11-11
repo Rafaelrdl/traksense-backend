@@ -295,6 +295,9 @@ SIMPLE_JWT = {
 # Redis
 REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379/0')
 
+# Frontend URL (for email links, OAuth callbacks, etc.)
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+
 # 🔒 SECURITY: MQTT Ingestion Authentication
 # INGESTION_SECRET is used for HMAC signature validation on /ingest endpoint
 # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
