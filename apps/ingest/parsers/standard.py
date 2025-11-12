@@ -101,13 +101,14 @@ class StandardParser(PayloadParser):
         # Prioridade 2: ts do EMQX (em milissegundos)
         if not timestamp and ts:
             try:
-                timestamp = datetime.datetime.fromtimestamp(ts / 1000.0)
+                # IMPORTANTE: Especificar timezone UTC explicitamente
+                timestamp = datetime.datetime.fromtimestamp(ts / 1000.0, tz=datetime.timezone.utc)
             except (ValueError, TypeError):
                 pass
         
-        # Fallback: timestamp atual
+        # Fallback: timestamp atual em UTC
         if not timestamp:
-            timestamp = datetime.datetime.now()
+            timestamp = datetime.datetime.now(tz=datetime.timezone.utc)
             logger.warning("Timestamp não encontrado, usando timestamp atual")
         
         # Extrair sensores

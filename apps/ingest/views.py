@@ -1,11 +1,13 @@
 import logging
 from datetime import datetime, timezone as dt_timezone
+import pytz
 
 from django.conf import settings
 from django.db import connection, transaction
 from django.utils import timezone as dj_timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
+from django.core.cache import cache
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -195,7 +197,7 @@ class IngestView(APIView):
             )
 
         def ensure_aware_timestamp(value, fallback):
-            """Converte timestamps em datetime timezone-aware."""
+            """Converte timestamps em datetime timezone-aware em UTC."""
             if value is None:
                 return fallback
             if isinstance(value, str):
@@ -215,7 +217,11 @@ class IngestView(APIView):
                     return fallback
             if isinstance(value, datetime):
                 if dj_timezone.is_naive(value):
-                    return dj_timezone.make_aware(value, dt_timezone.utc)
+                    # Força timezone UTC diretamente, sem usar make_aware do Django
+                    return value.replace(tzinfo=dt_timezone.utc)
+                # Se já é timezone-aware, garante que está em UTC
+                if value.tzinfo != dt_timezone.utc:
+                    return value.astimezone(dt_timezone.utc)
                 return value
             return fallback
 
@@ -223,25 +229,108 @@ class IngestView(APIView):
         try:
             client_id = data.get('client_id')
             payload = data.get('payload')
-            ts = data.get('ts')
+            ts = data.get('ts')  # Timestamp do EMQX (fallback)
 
-            if not all([payload, ts]):
-                missing = [f for f in ['payload', 'ts'] if not data.get(f)]
-                logger.warning(f"Missing required fields: {missing}")
+            if not payload:
+                logger.warning("Missing required field: payload")
                 return Response(
-                    {"error": f"Missing required fields: {', '.join(missing)}"},
+                    {"error": "Missing required field: payload"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            # 🌍 CORREÇÃO: Converter timestamp para horário local do Site
+            # bt é Unix timestamp UTC, mas armazenamos no horário local do Site
+            # Isso facilita análises e debug sem conversões mentais
+            
+            ingest_timestamp = None
+            senml_bt = None
+            site_timezone_str = 'America/Sao_Paulo'  # Default
+            
+            # 1. Extrair nome do Site do tópico MQTT
+            # Formato: tenants/{tenant}/sites/{site_name}/assets/{asset_tag}/telemetry
+            site_name = None
+            topic_parts = topic.split('/')
+            if len(topic_parts) >= 4 and topic_parts[2] == 'sites':
+                site_name = topic_parts[3]
+                
+                # 2. Obter timezone do Site com CACHE (evita query em cada mensagem)
+                cache_key = f"site_timezone:{tenant_slug}:{site_name}"
+                site_timezone_str = cache.get(cache_key)
+                
+                if not site_timezone_str:
+                    # Cache miss - consultar banco de dados
+                    from apps.assets.models import Site
+                    try:
+                        site = Site.objects.filter(name=site_name).first()
+                        if site and site.timezone:
+                            site_timezone_str = site.timezone
+                            # Cache por 24 horas (86400 segundos)
+                            # Será invalidado apenas se Site for atualizado
+                            cache.set(cache_key, site_timezone_str, 86400)
+                            logger.info(f"📍 Timezone do Site '{site_name}' cacheado: {site_timezone_str}")
+                        else:
+                            site_timezone_str = 'America/Sao_Paulo'
+                            cache.set(cache_key, site_timezone_str, 86400)
+                            logger.warning(f"⚠️ Site '{site_name}' não encontrado, usando timezone padrão: {site_timezone_str}")
+                    except Exception as e:
+                        logger.error(f"❌ Erro ao buscar Site '{site_name}': {e}")
+                        site_timezone_str = 'America/Sao_Paulo'
+                        cache.set(cache_key, site_timezone_str, 3600)  # Cache por 1 hora em caso de erro
+                else:
+                    logger.debug(f"✅ Timezone do Site '{site_name}' do cache: {site_timezone_str}")
+            
+            # 3. Extrair bt do payload SenML e converter para timezone local
             try:
-                ingest_timestamp = datetime.fromtimestamp(ts / 1000.0, tz=dt_timezone.utc)
-            except (ValueError, TypeError, OSError, OverflowError) as e:
-                logger.warning(f"Invalid timestamp: {ts} - {e}")
-                return Response(
-                    {"error": "Invalid timestamp format"},
-                    status=status.HTTP_400_BAD_REQUEST
+                if isinstance(payload, str):
+                    import json
+                    payload = json.loads(payload)
+                
+                if isinstance(payload, list) and len(payload) > 0:
+                    base_element = payload[0]
+                    if isinstance(base_element, dict):
+                        senml_bt = base_element.get('bt')
+                        
+                        if senml_bt:
+                            # bt é Unix timestamp UTC - armazenar diretamente em UTC
+                            # Com USE_TZ=True, Django sempre normaliza para UTC no banco
+                            utc_dt = datetime.fromtimestamp(senml_bt, tz=dt_timezone.utc)
+                            ingest_timestamp = utc_dt
+                            
+                            logger.info(
+                                f"⏰ TIMESTAMP - "
+                                f"Unix={senml_bt}s, "
+                                f"UTC={utc_dt.strftime('%d/%m/%Y %H:%M:%S')}, "
+                                f"✅ Armazenando: {ingest_timestamp.strftime('%d/%m/%Y %H:%M:%S %Z')}"
+                            )
+            except Exception as e:
+                logger.warning(f"Erro ao extrair bt do SenML: {e}")
+            
+            # Fallback para ts do EMQX se não conseguiu extrair bt
+            if not ingest_timestamp and ts:
+                try:
+                    # Usar ts do EMQX diretamente em UTC
+                    utc_dt = datetime.fromtimestamp(ts / 1000.0, tz=dt_timezone.utc)
+                    ingest_timestamp = utc_dt
+                    
+                    logger.warning(
+                        f"⚠️ USANDO TIMESTAMP DO EMQX (fallback) - "
+                        f"ts_original={ts}ms, "
+                        f"UTC={utc_dt.strftime('%d/%m/%Y %H:%M:%S')}"
+                    )
+                except (ValueError, TypeError, OSError, OverflowError) as e:
+                    logger.warning(f"Invalid EMQX timestamp: {ts} - {e}")
+            
+            # Se não tem nenhum timestamp, usar timestamp atual no timezone local
+            if not ingest_timestamp:
+                utc_now = datetime.now(tz=dt_timezone.utc)
+                site_tz = pytz.timezone(site_timezone_str)
+                ingest_timestamp = utc_now.astimezone(site_tz)
+                logger.warning(
+                    f"⚠️ Nenhum timestamp encontrado, usando timestamp atual: "
+                    f"{ingest_timestamp.strftime('%d/%m/%Y %H:%M:%S %Z')}"
                 )
 
+            # Payload já foi parseado acima ao extrair o bt, não precisa fazer novamente
             if isinstance(payload, str):
                 import json
                 try:
@@ -298,6 +387,11 @@ class IngestView(APIView):
                         payload=payload,
                         timestamp=ingest_timestamp
                     )
+                    
+                    logger.info(
+                        f"💾 TABELA: telemetry (histórico raw) - "
+                        f"ID={telemetry.id}, device={device_id}, topic={topic}"
+                    )
 
                     # Auto linking - extract hierarchy from MQTT topic
                     site_name, asset_tag = self._extract_site_and_asset_from_topic(topic)
@@ -349,6 +443,13 @@ class IngestView(APIView):
                             labels = {}
 
                         reading_timestamp = ensure_aware_timestamp(sensor.get('timestamp'), base_timestamp)
+                        
+                        # Log timestamp para debug
+                        logger.debug(
+                            f"📊 READING CRIADO - sensor_id={sensor_id}, "
+                            f"value={value}, timestamp_sensor={sensor.get('timestamp')}, "
+                            f"reading_timestamp={reading_timestamp.isoformat()}"
+                        )
 
                         # 🔧 PERFORMANCE FIX: Remove redundant .exists() check
                         # bulk_create with ignore_conflicts=True already handles duplicates
@@ -405,6 +506,12 @@ class IngestView(APIView):
                         # Calculate accurate metrics
                         readings_created = count_after - count_before
                         duplicates_skipped = len(readings_to_create) - readings_created
+                        
+                        logger.info(
+                            f"💾 TABELA: reading (TimescaleDB hypertable) - "
+                            f"Inseridos={readings_created}, Duplicados ignorados={duplicates_skipped}, "
+                            f"Total tentativa={len(readings_to_create)}"
+                        )
                         
                         # Atualizar status do device para ONLINE e last_seen
                         try:

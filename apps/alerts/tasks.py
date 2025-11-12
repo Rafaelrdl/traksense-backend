@@ -259,19 +259,29 @@ def evaluate_single_rule(rule):
         ).order_by('-ts').first()
         
         if not latest_reading:
-            logger.debug(
-                f"No telemetry data found for equipment {rule.equipment.tag} "
-                f"parameter {param.parameter_key} (device: {device.mqtt_client_id})"
+            logger.info(
+                f"⚠️ Rule {rule.id} - No reading found for sensor {sensor_tag} (device: {device.mqtt_client_id})"
             )
             continue
         
         # Check if reading is recent enough (within last 15 minutes)
-        if latest_reading.ts < timezone.now() - timedelta(minutes=15):
-            logger.debug(
-                f"Latest telemetry reading is too old "
-                f"({latest_reading.ts}) for rule {rule.id} param {param.parameter_key}"
+        # IMPORTANTE: reading.ts vem do PostgreSQL em UTC, mas precisamos comparar
+        # usando o horário real (ambos em UTC). A idade é calculada em UTC.
+        now = timezone.now()  # UTC
+        time_diff = now - latest_reading.ts
+        
+        if time_diff > timedelta(minutes=15):
+            logger.info(
+                f"⚠️ Rule {rule.id} - Reading too old for {param.parameter_key}: "
+                f"reading={latest_reading.ts}, now={now}, "
+                f"diff={time_diff.total_seconds()/60:.1f} min"
             )
             continue
+        
+        logger.info(
+            f"✅ Rule {rule.id} - Reading is fresh for {param.parameter_key}: "
+            f"value={latest_reading.value}, age={time_diff.total_seconds()/60:.1f} min"
+        )
         
         # Get the value to compare
         value = latest_reading.value
@@ -284,11 +294,16 @@ def evaluate_single_rule(rule):
         )
         
         if not condition_met:
-            logger.debug(
-                f"Rule {rule.id} parameter {param.parameter_key} condition not met: "
+            logger.info(
+                f"⚠️ Rule {rule.id} parameter {param.parameter_key} condition NOT MET: "
                 f"{value} {param.operator} {param.threshold} = False"
             )
             continue
+        
+        logger.info(
+            f"✅ Rule {rule.id} parameter {param.parameter_key} condition MET: "
+            f"{value} {param.operator} {param.threshold} = True - Creating alert!"
+        )
         
         # Condition is met - create alert
         # Gerar mensagem a partir do template
@@ -368,9 +383,15 @@ def evaluate_single_rule_legacy(rule):
             )
             return None
         
-        if latest_reading.ts < timezone.now() - timedelta(minutes=15):
+        # Check if reading is recent enough (within last 15 minutes)
+        # Comparação direta em UTC (ambos timestamps são UTC)
+        now = timezone.now()
+        time_diff = now - latest_reading.ts
+        
+        if time_diff > timedelta(minutes=15):
             logger.debug(
-                f"Latest telemetry reading is too old ({latest_reading.ts}) for rule {rule.id}"
+                f"Latest telemetry reading is too old: reading={latest_reading.ts}, now={now}, "
+                f"diff={time_diff.total_seconds()/60:.1f} min for rule {rule.id}"
             )
             return None
         

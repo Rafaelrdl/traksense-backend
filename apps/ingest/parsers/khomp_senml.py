@@ -165,15 +165,16 @@ class KhompSenMLParser(PayloadParser):
         if not base_name:
             raise ValueError("Payload SenML inválido: 'bn' não encontrado")
         
-        # Converter base_time para datetime
+        # Converter base_time para datetime UTC
         if base_time:
             try:
-                timestamp = datetime.datetime.fromtimestamp(base_time)
+                # IMPORTANTE: Especificar timezone UTC explicitamente
+                timestamp = datetime.datetime.fromtimestamp(base_time, tz=datetime.timezone.utc)
             except (ValueError, TypeError) as e:
                 logger.warning(f"Erro ao converter base_time: {e}, usando timestamp atual")
-                timestamp = datetime.datetime.now()
+                timestamp = datetime.datetime.now(tz=datetime.timezone.utc)
         else:
-            timestamp = datetime.datetime.now()
+            timestamp = datetime.datetime.now(tz=datetime.timezone.utc)
         
         # Informações extraídas
         device_id = base_name
