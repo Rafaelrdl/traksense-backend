@@ -76,7 +76,11 @@ def evaluate_rules_task():
                     logger.debug(f"No enabled rules found for tenant {tenant.slug}")
                     continue
                 
-                logger.info(f"Evaluating {rules.count()} rules for tenant {tenant.slug}")
+                enabled_rule_ids = list(rules.values_list('id', 'name', 'enabled'))
+                logger.info(
+                    f"📋 Evaluating {rules.count()} ENABLED rules for tenant {tenant.slug}: "
+                    f"{', '.join([f'#{r[0]} {r[1]} (enabled={r[2]})' for r in enabled_rule_ids])}"
+                )
                 
                 # 🔒 OPTIMIZATION: Reuse NotificationService instance (avoid recreating per rule)
                 notification_service = NotificationService()

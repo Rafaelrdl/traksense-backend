@@ -67,8 +67,14 @@ class RuleViewSet(viewsets.ModelViewSet):
     def toggle_status(self, request, pk=None):
         """Ativa/desativa uma regra"""
         rule = self.get_object()
+        old_status = rule.enabled
         rule.enabled = not rule.enabled
-        rule.save()
+        rule.save(update_fields=['enabled', 'updated_at'])
+        
+        logger.info(
+            f"🔄 Rule #{rule.id} '{rule.name}' status changed: "
+            f"{old_status} → {rule.enabled} by user {request.user.email}"
+        )
         
         serializer = self.get_serializer(rule)
         return Response({
