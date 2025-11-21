@@ -190,7 +190,9 @@ class Alert(models.Model):
     # Regra que disparou o alerta
     rule = models.ForeignKey(
         Rule,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name='alerts',
         verbose_name='Regra'
     )
