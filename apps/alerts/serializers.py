@@ -196,11 +196,21 @@ class RuleSerializer(serializers.ModelSerializer):
 class AlertSerializer(serializers.ModelSerializer):
     """Serializer para Alert"""
     
-    rule_name = serializers.CharField(source='rule.name', read_only=True)
-    equipment_name = serializers.CharField(source='rule.equipment.name', read_only=True)
-    acknowledged_by_email = serializers.CharField(source='acknowledged_by.email', read_only=True)
-    resolved_by_email = serializers.CharField(source='resolved_by.email', read_only=True)
+    rule_name = serializers.SerializerMethodField()
+    equipment_name = serializers.SerializerMethodField()
+    acknowledged_by_email = serializers.CharField(source='acknowledged_by.email', read_only=True, allow_null=True)
+    resolved_by_email = serializers.CharField(source='resolved_by.email', read_only=True, allow_null=True)
     is_active = serializers.BooleanField(read_only=True)
+    
+    def get_rule_name(self, obj):
+        """Retorna nome da regra ou indicação de regra deletada"""
+        return obj.rule.name if obj.rule else '(Regra Deletada)'
+    
+    def get_equipment_name(self, obj):
+        """Retorna nome do equipamento ou vazio se regra foi deletada"""
+        if obj.rule and obj.rule.equipment:
+            return obj.rule.equipment.name
+        return obj.asset_tag  # Fallback para o asset_tag armazenado no alerta
     
     class Meta:
         model = Alert
