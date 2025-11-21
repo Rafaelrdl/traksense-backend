@@ -1,6 +1,7 @@
 """
 Views para o sistema de Alertas e Regras
 """
+import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -19,6 +20,8 @@ from .serializers import (
     AlertStatisticsSerializer,
 )
 from apps.accounts.permissions import IsTenantMember, CanWrite
+
+logger = logging.getLogger(__name__)
 
 
 class RuleViewSet(viewsets.ModelViewSet):
