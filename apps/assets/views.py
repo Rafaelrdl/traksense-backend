@@ -204,8 +204,10 @@ class SiteViewSet(viewsets.ModelViewSet):
             - total_sensors: Total de sensores
             - online_devices: Dispositivos online
             - online_sensors: Sensores online
+            - avg_device_availability: Disponibilidade média dos devices (%)
+            - assets_with_active_alerts: Ativos com alertas ativos (não resolvidos e não reconhecidos)
         """
-        from django.db.models import Count, Q
+        from django.db.models import Count, Q, Avg
         
         site = self.get_object()
         
@@ -219,15 +221,29 @@ class SiteViewSet(viewsets.ModelViewSet):
         ).order_by('asset_type')
         
         # Estatísticas de devices e sensors (usando aggregate)
-        device_stats = Device.objects.filter(asset__site=site).aggregate(
+        device_stats = Device.objects.filter(asset__site=site, is_active=True).aggregate(
+            total=Count('id'),
+            online=Count('id', filter=Q(status='ONLINE')),
+            avg_availability=Avg('availability')
+        )
+        
+        sensor_stats = Sensor.objects.filter(device__asset__site=site, is_active=True).aggregate(
             total=Count('id'),
             online=Count('id', filter=Q(is_online=True))
         )
         
-        sensor_stats = Sensor.objects.filter(device__asset__site=site).aggregate(
-            total=Count('id'),
-            online=Count('id', filter=Q(is_online=True))
-        )
+        # Estatísticas de alertas - ativos com alertas ativos (não resolvidos e não reconhecidos)
+        from apps.alerts.models import Alert
+        
+        # Buscar tags dos assets do site
+        asset_tags = list(Asset.objects.filter(site=site).values_list('tag', flat=True))
+        
+        # Contar quantos assets únicos têm alertas ativos (não resolvidos e não reconhecidos)
+        assets_with_alerts = Alert.objects.filter(
+            asset_tag__in=asset_tags,
+            resolved=False,
+            acknowledged=False
+        ).values('asset_tag').distinct().count()
         
         # Montar resposta
         stats = {
@@ -236,8 +252,10 @@ class SiteViewSet(viewsets.ModelViewSet):
             'assets_by_type': {item['asset_type']: item['count'] for item in assets_by_type},
             'total_devices': device_stats['total'] or 0,
             'online_devices': device_stats['online'] or 0,
+            'avg_device_availability': round(device_stats['avg_availability'] or 0.0, 1),
             'total_sensors': sensor_stats['total'] or 0,
             'online_sensors': sensor_stats['online'] or 0,
+            'assets_with_active_alerts': assets_with_alerts,
         }
         
         return Response(stats)

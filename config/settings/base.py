@@ -333,6 +333,14 @@ CELERY_BEAT_SCHEDULE = {
             'expires': 300,
         },
     },
+    # Calcular disponibilidade dos devices (após atualizar status)
+    'calculate-device-availability': {
+        'task': 'assets.calculate_device_availability',
+        'schedule': 3600.0,  # 1 hora em segundos
+        'options': {
+            'expires': 300,
+        },
+    },
     # Avaliar regras de alertas a cada 5 minutos
     'evaluate-alert-rules': {
         'task': 'alerts.evaluate_rules',

@@ -221,3 +221,122 @@ def update_device_online_status(self):
     )
     
     return stats
+
+
+@shared_task(
+    name='assets.calculate_device_availability',
+    bind=True,
+    max_retries=3,
+    soft_time_limit=300,
+    time_limit=600
+)
+def calculate_device_availability(self):
+    """
+    Calcula a disponibilidade (%) de cada device nas últimas 24h.
+    
+    Fórmula simplificada baseada em status e last_seen:
+    - Se ONLINE e last_seen < 1h: 100%
+    - Se ONLINE e last_seen < 6h: 95%
+    - Se ONLINE e last_seen < 12h: 90%
+    - Se ONLINE e last_seen < 24h: 85%
+    - Se OFFLINE e last_seen < 24h: baseado no tempo offline
+    - Se sem last_seen ou > 24h: 0%
+    
+    Esta é uma aproximação. Para precisão total, seria necessário
+    um log histórico de mudanças de status.
+    
+    Execução: A cada 1 hora (após update_device_online_status)
+    
+    Returns:
+        dict: Estatísticas da execução
+    """
+    logger.info("📊 Iniciando cálculo de disponibilidade de devices...")
+    
+    stats = {
+        'total_tenants': 0,
+        'total_devices_updated': 0,
+        'errors': [],
+    }
+    
+    tenants = Tenant.objects.exclude(slug='public').all()
+    now = timezone.now()
+    
+    for tenant in tenants:
+        try:
+            logger.info(f"  📊 Calculando disponibilidade para tenant: {tenant.slug}")
+            
+            with schema_context(tenant.schema_name):
+                from apps.assets.models import Device
+                
+                devices = Device.objects.filter(is_active=True)
+                tenant_total = devices.count()
+                
+                if tenant_total == 0:
+                    logger.info(f"    ℹ️  Nenhum device encontrado em {tenant.slug}")
+                    continue
+                
+                updated_count = 0
+                
+                for device in devices:
+                    availability = 0.0
+                    
+                    if device.last_seen:
+                        time_since_seen = now - device.last_seen
+                        hours_since_seen = time_since_seen.total_seconds() / 3600
+                        
+                        if device.status == 'ONLINE':
+                            # Device online - boa disponibilidade
+                            if hours_since_seen < 1:
+                                availability = 100.0
+                            elif hours_since_seen < 6:
+                                availability = 95.0
+                            elif hours_since_seen < 12:
+                                availability = 90.0
+                            elif hours_since_seen < 24:
+                                availability = 85.0
+                            else:
+                                availability = 70.0
+                        else:
+                            # Device offline - calcular baseado em tempo offline
+                            if hours_since_seen < 1:
+                                availability = 95.0  # Acabou de cair
+                            elif hours_since_seen < 6:
+                                availability = 80.0
+                            elif hours_since_seen < 12:
+                                availability = 60.0
+                            elif hours_since_seen < 24:
+                                availability = 40.0
+                            else:
+                                availability = 0.0
+                    else:
+                        # Sem histórico de last_seen
+                        if device.status == 'ONLINE':
+                            availability = 100.0  # Assumir online recente
+                        else:
+                            availability = 0.0
+                    
+                    # Atualizar apenas se mudou
+                    if device.availability != availability:
+                        device.availability = availability
+                        device.save(update_fields=['availability', 'updated_at'])
+                        updated_count += 1
+                
+                logger.info(
+                    f"    ✅ {tenant.slug}: {updated_count}/{tenant_total} devices atualizados"
+                )
+                
+                stats['total_tenants'] += 1
+                stats['total_devices_updated'] += updated_count
+                
+        except Exception as e:
+            error_msg = f"Erro ao processar tenant {tenant.slug}: {str(e)}"
+            logger.error(f"    ❌ {error_msg}")
+            stats['errors'].append(error_msg)
+            continue
+    
+    logger.info(
+        f"✅ Cálculo concluído: "
+        f"{stats['total_devices_updated']} devices atualizados em {stats['total_tenants']} tenants"
+    )
+    
+    return stats

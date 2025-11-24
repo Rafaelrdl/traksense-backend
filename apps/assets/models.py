@@ -429,6 +429,14 @@ class Device(models.Model):
         help_text='Timestamp do último heartbeat/mensagem recebida'
     )
     
+    # Disponibilidade (%)
+    availability = models.FloatField(
+        'Disponibilidade (%)',
+        default=0.0,
+        validators=[MinValueValidator(0.0), MaxValueValidator(100.0)],
+        help_text='Porcentagem de uptime nas últimas 24h'
+    )
+    
     # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
