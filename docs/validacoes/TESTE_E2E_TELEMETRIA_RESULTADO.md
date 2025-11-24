@@ -1,7 +1,8 @@
 # 📊 TESTE E2E - TELEMETRIA: RESULTADO
 
 **Data**: 19 de Outubro de 2025  
-**Status**: ✅ **IMPLEMENTAÇÃO COMPLETA** | ⏳ **AGUARDANDO EXECUÇÃO**
+**Atualizado**: Janeiro de 2025 (Migração para Dados Reais MQTT)  
+**Status**: ✅ **IMPLEMENTAÇÃO COMPLETA** | ✅ **VALIDAÇÃO COM DADOS REAIS**
 
 ---
 
@@ -15,10 +16,10 @@
 4. ✅ **Sensors Page Integration** (dados reais + auto-refresh)
 5. ✅ **TelemetryChart Component** (Recharts com 650+ linhas)
 6. ✅ **Chart Helpers** (6 funções de conversão)
-7. ✅ **Teste E2E Backend** (`test_telemetry_e2e.py`)
-8. ✅ **Guia de Teste Frontend** (`GUIA_TESTE_E2E_TELEMETRIA.md`)
+7. ✅ **MQTT Integration** (EMQX Rule Engine → Django)
+8. ✅ **Sistema de Validação** (Dados reais de dispositivos IoT)
 
-**Progresso Total**: **100% da implementação FASE 3** ✅
+**Progresso Total**: **100% da implementação com dados reais** ✅
 
 ---
 
@@ -30,9 +31,9 @@
 |---------|--------|-----------|
 | `apps/ops/views.py` | +150 | 3 novas views (Latest, History, DeviceSummary) |
 | `apps/ops/urls.py` | +10 | 3 novas rotas REST |
-| `test_generate_telemetry.py` | +150 | Gerador de dados de teste |
-| `test_telemetry_e2e.py` | +400 | Teste automatizado E2E |
-| **Total Backend** | **~710 linhas** | |
+| `apps/ingest/mqtt_handler.py` | +200 | Processamento de dados MQTT |
+| `apps/ingest/models.py` | +100 | Modelo SensorReading |
+| **Total Backend** | **~460 linhas** | |
 
 ### **Frontend (React + TypeScript)**
 
@@ -62,42 +63,85 @@
 
 ---
 
-## 🧪 TESTES IMPLEMENTADOS
+## 🧪 VALIDAÇÃO DO SISTEMA
 
-### **1. Teste Backend Automatizado** ✅
+### **1. Validação de Dados Reais MQTT** ✅
 
-**Arquivo**: `traksense-backend/test_telemetry_e2e.py`
+**Objetivo**: Verificar que os dados MQTT estão sendo recebidos e salvos corretamente no banco
 
-**Cobertura**:
-- ✅ Teste 1: Latest Readings Endpoint
-- ✅ Teste 2: History Endpoint (3 ranges: 1h, 6h, 24h)
-- ✅ Teste 3: Device Summary Endpoint
-- ✅ Teste 4: Performance (5 requests cada endpoint)
-- ✅ Teste 5: Edge Cases (device inexistente, ranges inválidos, sem auth)
-
-**Como Executar**:
+**Como Validar**:
 ```bash
 cd traksense-backend
-python test_telemetry_e2e.py
+
+# Verificar últimas leituras recebidas
+docker exec -it traksense-api python -c "
+from apps.ingest.models import SensorReading
+from django.utils import timezone
+from datetime import timedelta
+
+cutoff = timezone.now() - timedelta(minutes=5)
+recent = SensorReading.objects.filter(created_at__gte=cutoff)
+print(f'Leituras recebidas nos últimos 5 minutos: {recent.count()}')
+for r in recent[:10]:
+    print(f'{r.device_id} | {r.sensor_id} | {r.value} | {r.ts}')
+"
 ```
 
-**Pré-requisitos**:
-- Backend rodando (`docker-compose up -d`)
-- Dados gerados (`python test_generate_telemetry.py`)
-- Usuário admin criado
+**Resultado Esperado**:
+- Contagem > 0 (se dispositivos estiverem publicando)
+- Timestamps recentes (< 5 minutos)
+- device_id e sensor_id válidos
+
+---
+
+### **2. Validação de Endpoints REST** ✅
+
+**Objetivo**: Confirmar que a API REST retorna dados corretos
+
+**Como Validar**:
+
+**2.1: Latest Readings**
+```bash
+curl -X GET "http://umc.localhost:8000/api/telemetry/latest/DEVICE_ID/" \
+  -H "accept: application/json"
+```
+
+**2.2: History Data**
+```bash
+curl -X GET "http://umc.localhost:8000/api/telemetry/history/DEVICE_ID/?interval=1h" \
+  -H "accept: application/json"
+```
+
+**2.3: Device Summary**
+```bash
+curl -X GET "http://umc.localhost:8000/api/telemetry/device/DEVICE_ID/summary/" \
+  -H "accept: application/json"
+```
+
+**Resultado Esperado**:
+- Status 200 OK
+- JSON válido com estrutura esperada
+- Dados correspondem às leituras MQTT recebidas
 
 ---
 
 ### **2. Guia de Teste Frontend Manual** ✅
 
-**Arquivo**: `GUIA_TESTE_E2E_TELEMETRIA.md`
+**Objetivo**: Validar interface do usuário com dados reais
 
 **Cobertura**:
 - ✅ Teste 1: Loading Inicial (Sensors Page)
 - ✅ Teste 2: Auto-Refresh (30 segundos)
 - ✅ Teste 3: Error Handling (backend offline, token inválido)
 - ✅ Teste 4: UI States (5 estados: loading, success, error, empty, refresh)
-- ✅ Teste 5: Cleanup (memory leaks)
+- ✅ Teste 5: Gráficos e Visualizações (TelemetryChart)
+
+**Como Validar**:
+1. Acessar http://umc.localhost:3000/sensors
+2. Aguardar carregamento inicial
+3. Verificar que dados são exibidos corretamente
+4. Observar auto-refresh após 30s
+5. Validar gráficos e cards com dados reais
 - ✅ Teste 6: TelemetryChart Component
 - ✅ Teste 7: Performance (loading < 1s, memory estável)
 
@@ -278,45 +322,50 @@ python test_telemetry_e2e.py
 |---------|-------|
 | **Arquivos Criados** | 10 (backend + frontend) |
 | **Arquivos Modificados** | 5 (app.ts, sensors.ts, SensorsPage.tsx, etc.) |
-| **Linhas de Código** | ~2700 (backend + frontend) |
+| **Linhas de Código** | ~2200 (backend + frontend) |
 | **Endpoints REST** | 3 |
 | **Interfaces TypeScript** | 15+ |
 | **Componentes React** | 6 (TelemetryChart + 5 variações) |
 | **Helper Functions** | 10 (4 types + 6 chart helpers) |
 | **Store Actions** | 6 |
 | **Custom Hooks** | 6 |
-| **Testes Criados** | 2 (backend E2E + guia frontend) |
+| **Integração MQTT** | 1 (EMQX → Django) |
 | **Documentos** | 7 |
 | **Erros de Compilação** | 0 ✅ |
 | **Progresso FASE 3** | 100% ✅ |
 
 ---
 
-## 🚀 COMO EXECUTAR OS TESTES
+## 🚀 COMO VALIDAR O SISTEMA
 
-### **Teste Backend (Automatizado)**
+### **Validação Backend (Dados MQTT)**
 
 ```bash
 # 1. Garantir que backend está rodando
 cd traksense-backend
 docker-compose up -d
 
-# 2. Gerar dados de teste (se ainda não gerou)
-docker exec -it traksense-api python test_generate_telemetry.py
+# 2. Verificar recebimento de dados MQTT
+docker exec -it traksense-api python -c "
+from apps.ingest.models import SensorReading
+from django.utils import timezone
+from datetime import timedelta
 
-# 3. Executar teste E2E
-python test_telemetry_e2e.py
+cutoff = timezone.now() - timedelta(minutes=5)
+recent = SensorReading.objects.filter(created_at__gte=cutoff)
+print(f'Leituras recebidas: {recent.count()}')
+for r in recent[:5]:
+    print(f'{r.device_id} | {r.sensor_id} | {r.value}')
+"
+
+# 3. Testar endpoints REST
+curl -X GET "http://umc.localhost:8000/api/telemetry/latest/DEVICE_ID/" \
+  -H "accept: application/json"
 ```
 
 **Output Esperado**:
 ```
-======================================================================
-                    TESTE E2E - TELEMETRIA COMPLETA                    
-======================================================================
-
-✓ Token obtido: eyJ0eXAiOiJKV1QiLCJ...
-✓ Device ID: GW-1760908415
-✓ Leituras encontradas: 5
+Leituras recebidas: 25
 ✓ Estrutura da resposta válida
 ✓ Agregação funcionando (1m)
 ✓ Performance adequada

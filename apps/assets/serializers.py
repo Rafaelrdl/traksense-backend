@@ -446,20 +446,10 @@ class SensorSerializer(serializers.ModelSerializer):
         
         Retorna um percentual baseado no número de leituras esperadas
         vs recebidas. Se não houver leituras, retorna None.
+        
+        TODO: Implementar cálculo real baseado em TelemetryReading quando necessário.
+        Por enquanto, retorna None - a disponibilidade deve vir do Device.
         """
-        # TODO: Implementar cálculo real quando integrar com TelemetryReading
-        # Por enquanto, retorna um mock baseado em is_online
-        if obj.last_reading_at:
-            from django.utils import timezone
-            from datetime import timedelta
-            
-            # Se teve leitura nas últimas 24h, considera boa disponibilidade
-            if timezone.now() - obj.last_reading_at < timedelta(days=1):
-                return 98.5
-            elif timezone.now() - obj.last_reading_at < timedelta(days=7):
-                return 85.0
-            else:
-                return 50.0
         return None
     
     def get_device_display_name(self, obj):

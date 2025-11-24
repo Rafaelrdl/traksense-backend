@@ -1,7 +1,7 @@
-# 🧪 GUIA DE TESTE - FASE 3 TELEMETRIA
+# 🧪 GUIA DE TESTE - TELEMETRIA COM DADOS REAIS
 
-**Data**: 19 de outubro de 2025  
-**Objetivo**: Validar endpoints de telemetria do backend
+**Data**: 24 de novembro de 2025  
+**Objetivo**: Validar endpoints de telemetria do backend com dados reais via MQTT
 
 ---
 
@@ -10,7 +10,7 @@
 ### **1. Backend Rodando**
 
 ```bash
-cd c:\Users\Rafael` Ribeiro\TrakSense\traksense-backend
+cd c:\Users\Rafael Ribeiro\TrakSense\traksense-backend
 docker-compose up -d
 ```
 
@@ -32,50 +32,27 @@ docker exec -it traksense-api python manage.py shell
 ```
 
 ```python
-from apps.tenants.models import Client
-print(Client.objects.filter(schema_name='umc').exists())
+from apps.tenants.models import Tenant
+print(Tenant.objects.filter(schema_name='umc').exists())
 # Deve retornar: True
 ```
 
-### **3. Devices e Sensores**
+### **3. Devices e Sensores Reais**
 
-Criar devices e sensores se não existirem:
-```bash
-docker exec -it traksense-api python create_test_user_assets.py
-```
+Os devices devem ser cadastrados via interface web ou API e enviar dados via MQTT.
+Não há mais scripts de geração de dados mockados.
 
 ---
 
-## 🚀 **TESTE 1: GERAR DADOS DE TELEMETRIA**
+## 🚀 **TESTE 1: VALIDAR RECEPÇÃO DE DADOS MQTT**
 
-### **Executar Script**
+### **Verificar Rule Engine EMQX**
 
 ```bash
-docker exec -it traksense-api python test_generate_telemetry.py
+docker exec -it traksense-emqx emqx_ctl rules list
 ```
 
-### **Output Esperado**
-
-```
-🚀 Gerando telemetria fake para tenant 'umc'...
-   Período: últimas 24 horas
-   Intervalo: 60 segundos
-
-📱 Encontrados 2 devices com sensores:
-   - Device 001 (SN12345): 3 sensores
-   - Device 002 (SN67890): 2 sensores
-
-⏱️  Gerando 1440 pontos por sensor...
-
-   ✅ Temperatura (TEMPERATURE): 1440 readings
-   ✅ Umidade (HUMIDITY): 1440 readings
-   ✅ Pressão (PRESSURE): 1440 readings
-      Total device Device 001: 4320 readings
-
-🎉 Total: 7200 readings criados com sucesso!
-```
-
-### **Validação**
+### **Verificar Leituras Recebidas**
 
 ```bash
 docker exec -it traksense-api python manage.py shell
@@ -92,12 +69,14 @@ with schema_context('umc'):
     # Verificar range de datas
     first = Reading.objects.order_by('ts').first()
     last = Reading.objects.order_by('-ts').first()
-    print(f"Primeiro: {first.ts}")
-    print(f"Último: {last.ts}")
+    if first:
+        print(f"Primeiro: {first.ts}")
+        print(f"Último: {last.ts}")
     
     # Verificar devices únicos
     devices = Reading.objects.values_list('device_id', flat=True).distinct()
     print(f"Devices: {list(devices)}")
+```
 ```
 
 **Resultado esperado**:
@@ -391,26 +370,31 @@ http://umc.localhost:8000/api/docs/
 
 ## 🔄 **TESTE 7: PERFORMANCE**
 
-### **7A: Query com Muitos Dados**
+### **7A: Query com Histórico Extenso**
+
+Após acumular dados por algumas horas/dias, testar performance:
 
 ```bash
-# Gerar mais dados
-docker exec -it traksense-api python test_generate_telemetry.py --hours 168 --interval 30
-
-# Testar query
 time curl -X GET "http://umc.localhost:8000/api/telemetry/history/device_001/?interval=1h" \
   -H "accept: application/json" -o /dev/null -s -w "%{time_total}\n"
 ```
 
 **Resultado esperado**: < 2 segundos
-
-### **7B: Bulk Creation**
-
-```bash
-docker exec -it traksense-api python test_generate_telemetry.py --clear --hours 48
+  -H "accept: application/json" -o /dev/null -s -w "%{time_total}\n"
 ```
 
-**Deve completar em < 30 segundos**
+**Resultado esperado**: < 2 segundos
+
+### **7B: Query com Muitos Dados (Carga Alta)**
+
+Aguardar acúmulo de dados (24-48h de operação) e testar:
+
+```bash
+time curl -X GET "http://umc.localhost:8000/api/telemetry/history/device_001/?interval=1h&from=2025-01-01T00:00:00Z" \
+  -H "accept: application/json" -o /dev/null -s -w "%{time_total}\n"
+```
+
+**Resultado esperado**: < 3 segundos mesmo com alto volume
 
 ✅ **TESTE 7 PASSOU** se performance aceitável
 
@@ -418,8 +402,8 @@ docker exec -it traksense-api python test_generate_telemetry.py --clear --hours 
 
 ## ✅ **CHECKLIST FINAL**
 
-- [ ] TESTE 1: Dados gerados (7200+ readings)
-- [ ] TESTE 2: Endpoint latest funciona
+- [ ] TESTE 1: Dados MQTT recebidos e salvos no banco
+- [ ] TESTE 2: Endpoint latest funciona com dados reais
 - [ ] TESTE 3: Endpoint history funciona (raw + agregado)
 - [ ] TESTE 4: Endpoint summary funciona
 - [ ] TESTE 5: Error handling correto
@@ -433,7 +417,8 @@ docker exec -it traksense-api python test_generate_telemetry.py --clear --hours 
 ```
 ✅ Todos os 7 testes passaram!
 
-Backend da FASE 3 está validado e pronto para integração frontend.
+Backend de telemetria validado com dados reais MQTT.
+Sistema pronto para monitoramento em produção.
 ```
 
 ---
@@ -442,20 +427,28 @@ Backend da FASE 3 está validado e pronto para integração frontend.
 
 ### **Erro: Device not found**
 
-**Causa**: Devices não criados
+**Causa**: Device não cadastrado na interface web
 
 **Solução**:
-```bash
-docker exec -it traksense-api python create_test_user_assets.py
-```
+1. Acessar http://umc.localhost:3000/assets
+2. Criar device via interface web
+3. Associar device_id correto no EMQX Rule
 
 ### **Erro: No readings found**
 
-**Causa**: Telemetria não gerada
+**Causa**: MQTT não está publicando ou Rule Engine com erro
 
 **Solução**:
 ```bash
-docker exec -it traksense-api python test_generate_telemetry.py
+# 1. Verificar logs do EMQX
+docker logs traksense-emqx --tail 50
+
+# 2. Verificar se rule está ativa
+# Acessar http://localhost:18083 (EMQX Dashboard)
+# Ir em Rules → Verificar status da rule
+
+# 3. Testar publicação manual via MQTTX
+# (ver instruções no GUIA_MQTTX_TESTE.md)
 ```
 
 ### **Erro: 500 Internal Server Error**
@@ -481,6 +474,21 @@ docker-compose down
 docker-compose up -d
 ```
 
+### **Erro: Timestamps incorretos**
+
+**Causa**: Timezone mal configurado ou timestamps em formato errado
+
+**Solução**:
+```bash
+# Verificar formato dos dados no banco
+docker exec -it traksense-api python -c "
+from apps.ingest.models import SensorReading
+readings = SensorReading.objects.all().order_by('-ts')[:5]
+for r in readings:
+    print(f'{r.device_id} | {r.ts} | {r.created_at}')
+"
+```
+
 ---
 
-**EXECUTE OS TESTES E VALIDE A FASE 3 BACKEND!** 🚀
+**EXECUTE OS TESTES E VALIDE O BACKEND COM DADOS REAIS!** 🚀

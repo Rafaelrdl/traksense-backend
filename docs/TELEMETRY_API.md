@@ -265,13 +265,30 @@ WHERE view_name LIKE 'reading_%';
 "
 ```
 
-### **5. Seed de Dados de Teste**
+### **5. Verificar Dados MQTT Recebidos**
 ```bash
-# Gerar 24h de dados (intervalo de 5s)
-docker exec traksense-api python manage.py seed_readings --tenant=uberlandia_medical_center --hours=24 --interval=5
+# Verificar últimas leituras recebidas (últimos 5 minutos)
+docker exec traksense-api python -c "
+from apps.ingest.models import SensorReading
+from django.utils import timezone
+from datetime import timedelta
 
-# Gerar 7 dias de dados (intervalo de 30s)
-docker exec traksense-api python manage.py seed_readings --tenant=uberlandia_medical_center --hours=168 --interval=30
+cutoff = timezone.now() - timedelta(minutes=5)
+recent = SensorReading.objects.filter(created_at__gte=cutoff)
+print(f'Leituras recebidas nos últimos 5 minutos: {recent.count()}')
+for r in recent[:10]:
+    print(f'{r.device_id} | {r.sensor_id} | {r.value} | {r.ts}')
+"
+
+# Verificar volume de dados por device
+docker exec traksense-api python -c "
+from apps.ingest.models import SensorReading
+from django.db.models import Count
+
+stats = SensorReading.objects.values('device_id').annotate(total=Count('id')).order_by('-total')
+for s in stats[:5]:
+    print(f'{s['device_id']}: {s['total']} leituras')
+"
 ```
 
 ---

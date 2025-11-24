@@ -105,12 +105,19 @@ for row in latest_rows:
 
 ### **Validação Backend (opcional)**
 
+Testar endpoints REST manualmente:
+
 ```bash
-cd traksense-backend
-python test_telemetry_e2e.py
+# Verificar device summary
+curl -X GET "http://umc.localhost:8000/api/telemetry/device/DEVICE_ID/summary/" \
+  -H "accept: application/json"
+
+# Verificar latest readings
+curl -X GET "http://umc.localhost:8000/api/telemetry/latest/DEVICE_ID/" \
+  -H "accept: application/json"
 ```
 
-**Esperado**: Todos os testes passam (Latest, History, Summary, Performance, Edge Cases)
+**Esperado**: Status 200 OK, JSON válido com dados reais
 
 ---
 
@@ -158,7 +165,7 @@ labels.get('unit', '') if isinstance(labels, dict) else ''
 ```
 
 ### **3. Teste E2E é Essencial**
-O erro só foi descoberto ao testar com dados reais. Teste E2E teria pegado isso antes.
+O erro só foi descoberto ao testar com dados reais. Testes manuais são fundamentais para validação.
 
 ---
 
@@ -168,9 +175,10 @@ O erro só foi descoberto ao testar com dados reais. Teste E2E teria pegado isso
    - Recarregar página `/sensors`
    - Confirmar sensores reais aparecem
 
-2. **Executar Teste E2E**
-   - Rodar `test_telemetry_e2e.py`
-   - Validar todos os endpoints
+2. **Testar Endpoints Manualmente**
+   - Validar `/api/telemetry/latest/{device_id}/`
+   - Validar `/api/telemetry/history/{device_id}/`
+   - Validar `/api/telemetry/device/{device_id}/summary/`
 
 3. **Considerar Refatoração**
    - Usar ORM ao invés de raw SQL quando possível
