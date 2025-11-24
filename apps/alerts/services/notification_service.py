@@ -251,26 +251,16 @@ class NotificationService:
             }
         
         try:
-            # TODO: Implement actual SMS sending logic
-            # Example with Twilio:
-            # from twilio.rest import Client
-            # client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-            # message = client.messages.create(
-            #     body=f"[{alert.severity}] {alert.rule.name}: {alert.message}",
-            #     from_=settings.TWILIO_PHONE_NUMBER,
-            #     to=preferences.phone_number
-            # )
-            
-            logger.info(
-                f"SMS would be sent to {preferences.phone_number} "
-                f"for alert {alert.id} (mock implementation)"
+            # TODO: Implement SMS provider integration (Twilio, AWS SNS, etc.)
+            logger.warning(
+                f"SMS notification skipped - provider not configured. "
+                f"Alert {alert.id} for user {user.email}"
             )
             
-            # Return 'skipped' status until real provider is integrated
             return {
                 'sent': False,
                 'skipped': True,
-                'reason': 'SMS provider not integrated - mock implementation'
+                'reason': 'SMS provider not configured'
             }
             
         except Exception as e:
@@ -305,26 +295,16 @@ class NotificationService:
             }
         
         try:
-            # TODO: Implement actual WhatsApp sending logic
-            # Example with Twilio:
-            # from twilio.rest import Client
-            # client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-            # message = client.messages.create(
-            #     body=f"[{alert.severity}] {alert.rule.name}: {alert.message}",
-            #     from_='whatsapp:' + settings.TWILIO_WHATSAPP_NUMBER,
-            #     to='whatsapp:' + preferences.whatsapp_number
-            # )
-            
-            logger.info(
-                f"WhatsApp message would be sent to {preferences.whatsapp_number} "
-                f"for alert {alert.id} (mock implementation)"
+            # TODO: Implement WhatsApp provider integration (Twilio, Meta Business API, etc.)
+            logger.warning(
+                f"WhatsApp notification skipped - provider not configured. "
+                f"Alert {alert.id} for user {user.email}"
             )
             
-            # Return 'skipped' status until real provider is integrated
             return {
                 'sent': False,
                 'skipped': True,
-                'reason': 'WhatsApp provider not integrated - mock implementation'
+                'reason': 'WhatsApp provider not configured'
             }
             
         except Exception as e:
