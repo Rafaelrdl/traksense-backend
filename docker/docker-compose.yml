@@ -4,7 +4,7 @@ services:
   # PostgreSQL with TimescaleDB extension
   postgres:
     image: timescale/timescaledb:latest-pg16-oss
-    container_name: traksense-postgres
+    container_name: climatrak-postgres
     environment:
       POSTGRES_DB: app
       POSTGRES_USER: app
@@ -20,12 +20,12 @@ services:
       timeout: 3s
       retries: 20
     networks:
-      - traksense
+      - climatrak
 
   # Redis for caching and Celery broker
   redis:
     image: redis:7-alpine
-    container_name: traksense-redis
+    container_name: climatrak-redis
     ports:
       - "6379:6379"
     volumes:
@@ -36,12 +36,12 @@ services:
       timeout: 3s
       retries: 20
     networks:
-      - traksense
+      - climatrak
 
   # MinIO for S3-compatible object storage
   minio:
     image: minio/minio:latest
-    container_name: traksense-minio
+    container_name: climatrak-minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -57,12 +57,12 @@ services:
       timeout: 3s
       retries: 30
     networks:
-      - traksense
+      - climatrak
 
   # EMQX for MQTT messaging
   emqx:
     image: emqx/emqx:latest
-    container_name: traksense-emqx
+    container_name: climatrak-emqx
     ports:
       - "1883:1883"   # MQTT
       - "8883:8883"   # MQTT/SSL
@@ -74,7 +74,7 @@ services:
       - emqx_log:/opt/emqx/log
       - ./emqx/default_api_key.conf:/opt/emqx/etc/default_api_key.conf:ro
     environment:
-      EMQX_NAME: traksense
+      EMQX_NAME: climatrak
       EMQX_HOST: 127.0.0.1
       EMQX_NODE__COOKIE: algum-cookie-bem-aleatorio-dev
       EMQX_ALLOW_ANONYMOUS: "false"
@@ -85,12 +85,12 @@ services:
       timeout: 3s
       retries: 30
     networks:
-      - traksense
+      - climatrak
 
   # Mailpit for SMTP testing
   mailpit:
     image: axllent/mailpit:latest
-    container_name: traksense-mailpit
+    container_name: climatrak-mailpit
     ports:
       - "1025:1025"  # SMTP
       - "8025:8025"  # Web UI
@@ -104,14 +104,14 @@ services:
       timeout: 3s
       retries: 30
     networks:
-      - traksense
+      - climatrak
 
   # Django API
   api:
     build:
       context: ..
       dockerfile: docker/api/Dockerfile
-    container_name: traksense-api
+    container_name: climatrak-api
     command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 1 --worker-class gthread --threads 2 --timeout 120 --log-level debug
     environment:
       DJANGO_SECRET_KEY: dev-secret-key-change-in-production-minimum-50-characters-long
@@ -149,14 +149,14 @@ services:
       mailpit:
         condition: service_healthy
     networks:
-      - traksense
+      - climatrak
 
   # Celery Worker
   worker:
     build:
       context: ..
       dockerfile: docker/api/Dockerfile
-    container_name: traksense-worker
+    container_name: climatrak-worker
     command: celery -A config worker --loglevel=info
     environment:
       DJANGO_SECRET_KEY: dev-secret-key-change-in-production-minimum-50-characters-long
@@ -179,14 +179,14 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - traksense
+      - climatrak
 
   # Celery Beat (Scheduler)
   scheduler:
     build:
       context: ..
       dockerfile: docker/api/Dockerfile
-    container_name: traksense-scheduler
+    container_name: climatrak-scheduler
     command: celery -A config beat --loglevel=info
     environment:
       DJANGO_SECRET_KEY: dev-secret-key-change-in-production-minimum-50-characters-long
@@ -205,12 +205,12 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - traksense
+      - climatrak
 
   # Nginx reverse proxy
   nginx:
     image: nginx:alpine
-    container_name: traksense-nginx
+    container_name: climatrak-nginx
     ports:
       - "80:80"
     volumes:
@@ -218,7 +218,7 @@ services:
     depends_on:
       - api
     networks:
-      - traksense
+      - climatrak
 
 volumes:
   postgres_data:
@@ -228,5 +228,5 @@ volumes:
   emqx_log:
 
 networks:
-  traksense:
+  climatrak:
     driver: bridge
