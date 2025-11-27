@@ -190,6 +190,147 @@ class AssetSerializer(serializers.ModelSerializer):
         return data
 
 
+class AssetCompleteSerializer(serializers.ModelSerializer):
+    """
+    Serializer completo para monitoramento de Assets.
+    
+    Usado pelo endpoint /api/assets/complete/ para dashboards de monitoramento.
+    Inclui dados detalhados, métricas resumidas e informações de dispositivos/sensores.
+    
+    Este serializer é otimizado para fornecer todos os dados necessários para:
+    - TrakSense HVAC Monitor (monitoramento IoT)
+    - TrakNor CMMS (gestão de ativos e manutenção)
+    
+    Campos adicionais:
+        - site_name: Nome do site
+        - site_company: Empresa do site
+        - full_location: Localização completa
+        - device_count: Total de dispositivos
+        - sensor_count: Total de sensores
+        - online_device_count: Dispositivos online
+        - online_sensor_count: Sensores online
+        - latest_readings: Últimas leituras dos sensores
+        - alert_count: Número de alertas ativos
+    """
+    
+    site_name = serializers.CharField(source='site.name', read_only=True)
+    site_company = serializers.CharField(source='site.company', read_only=True)
+    full_location = serializers.CharField(read_only=True)
+    device_count = serializers.SerializerMethodField()
+    sensor_count = serializers.SerializerMethodField()
+    online_device_count = serializers.SerializerMethodField()
+    online_sensor_count = serializers.SerializerMethodField()
+    latest_readings = serializers.SerializerMethodField()
+    alert_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Asset
+        fields = [
+            'id',
+            'tag',
+            'name',
+            'site',
+            'site_name',
+            'site_company',
+            'full_location',
+            'asset_type',
+            'asset_type_other',
+            'manufacturer',
+            'model',
+            'serial_number',
+            'location_description',
+            'installation_date',
+            'last_maintenance',
+            'status',
+            'health_score',
+            'specifications',
+            'device_count',
+            'sensor_count',
+            'online_device_count',
+            'online_sensor_count',
+            'latest_readings',
+            'alert_count',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = fields
+    
+    def get_device_count(self, obj):
+        """Total de dispositivos ativos."""
+        if hasattr(obj, 'total_device_count'):
+            return obj.total_device_count
+        return obj.devices.filter(is_active=True).count()
+    
+    def get_sensor_count(self, obj):
+        """Total de sensores ativos."""
+        if hasattr(obj, 'total_sensor_count'):
+            return obj.total_sensor_count
+        return Sensor.objects.filter(device__asset=obj, is_active=True).count()
+    
+    def get_online_device_count(self, obj):
+        """Dispositivos online (status='ONLINE')."""
+        if hasattr(obj, 'online_device_count') and obj.online_device_count is not None:
+            return obj.online_device_count
+        return obj.devices.filter(status='ONLINE', is_active=True).count()
+    
+    def get_online_sensor_count(self, obj):
+        """Sensores online."""
+        if hasattr(obj, 'online_sensor_count') and obj.online_sensor_count is not None:
+            return obj.online_sensor_count
+        return Sensor.objects.filter(device__asset=obj, is_online=True, is_active=True).count()
+    
+    def get_latest_readings(self, obj):
+        """
+        Retorna as últimas leituras dos sensores do asset.
+        
+        Formato:
+        {
+            "temperature": {"value": 22.5, "unit": "°C", "timestamp": "..."},
+            "humidity": {"value": 45.0, "unit": "%", "timestamp": "..."},
+            ...
+        }
+        """
+        from apps.ingest.models import Reading
+        from django.db.models import Max
+        
+        readings = {}
+        
+        # Buscar sensores ativos do asset
+        sensors = Sensor.objects.filter(
+            device__asset=obj,
+            is_active=True
+        ).select_related('device')
+        
+        for sensor in sensors:
+            # Buscar última leitura (campo timestamp é 'ts', não 'time')
+            last_reading = Reading.objects.filter(
+                sensor_id=sensor.id
+            ).order_by('-ts').first()
+            
+            if last_reading:
+                metric_key = sensor.metric_type.lower() if sensor.metric_type else f'sensor_{sensor.id}'
+                readings[metric_key] = {
+                    'sensor_id': sensor.id,
+                    'sensor_name': sensor.name,
+                    'value': float(last_reading.value) if last_reading.value else None,
+                    'unit': sensor.unit or '',
+                    'timestamp': last_reading.ts.isoformat() if last_reading.ts else None,
+                    'is_online': sensor.is_online,
+                }
+        
+        return readings
+    
+    def get_alert_count(self, obj):
+        """Número de alertas ativos (não resolvidos e não reconhecidos)."""
+        from apps.alerts.models import Alert
+        
+        return Alert.objects.filter(
+            asset_tag=obj.tag,
+            resolved=False,
+            acknowledged=False
+        ).count()
+
+
 class DeviceListSerializer(serializers.ModelSerializer):
     """
     Serializer simplificado para listagem de Devices.

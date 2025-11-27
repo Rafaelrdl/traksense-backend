@@ -401,6 +401,77 @@ class AssetViewSet(viewsets.ModelViewSet):
             'updated_at': asset.updated_at,
         })
 
+    @action(detail=False, methods=['get'])
+    def complete(self, request):
+        """
+        Lista todos os assets com dados completos para monitoramento.
+        
+        GET /api/assets/complete/
+        
+        Este endpoint é otimizado para dashboards de monitoramento e retorna
+        assets com informações detalhadas incluindo:
+        - Dados completos do asset
+        - Contagem de devices e sensors
+        - Informações de localização
+        - Health score e status
+        - Métricas resumidas dos sensores (últimas leituras)
+        
+        Query params:
+            - site: Filtra por site ID
+            - asset_type: Filtra por tipo de ativo
+            - status: Filtra por status
+            - search: Busca por tag, nome, fabricante
+        
+        Response: Lista de assets com dados completos
+        """
+        from django.db.models import Count, Q, Prefetch, Subquery, OuterRef
+        from .serializers import AssetCompleteSerializer
+        
+        # Aplicar filtros
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Prefetch para otimizar N+1 queries
+        queryset = queryset.prefetch_related(
+            Prefetch(
+                'devices',
+                queryset=Device.objects.filter(is_active=True).prefetch_related(
+                    Prefetch(
+                        'sensors',
+                        queryset=Sensor.objects.filter(is_active=True)
+                    )
+                )
+            )
+        )
+        
+        # Annotate counts usando subqueries para evitar problemas com joins
+        # Online devices (status='ONLINE')
+        online_devices_subquery = Device.objects.filter(
+            asset=OuterRef('pk'),
+            status='ONLINE',
+            is_active=True
+        ).values('asset').annotate(cnt=Count('id')).values('cnt')
+        
+        # Online sensors (is_online=True)
+        online_sensors_subquery = Sensor.objects.filter(
+            device__asset=OuterRef('pk'),
+            is_online=True,
+            is_active=True
+        ).values('device__asset').annotate(cnt=Count('id')).values('cnt')
+        
+        queryset = queryset.annotate(
+            online_device_count=Subquery(online_devices_subquery),
+            online_sensor_count=Subquery(online_sensors_subquery),
+        )
+        
+        # Paginação
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = AssetCompleteSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = AssetCompleteSerializer(queryset, many=True)
+        return Response(serializer.data)
+
 
 class DeviceViewSet(viewsets.ModelViewSet):
     """
