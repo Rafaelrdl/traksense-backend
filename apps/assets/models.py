@@ -191,6 +191,26 @@ class Asset(models.Model):
         help_text='Site onde o equipamento está instalado'
     )
     
+    # Relacionamento opcional com Setor e Subseção (hierarquia de localização)
+    sector = models.ForeignKey(
+        'locations.Sector',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assets',
+        verbose_name='Setor',
+        help_text='Setor onde o equipamento está instalado (opcional)'
+    )
+    subsection = models.ForeignKey(
+        'locations.Subsection',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assets',
+        verbose_name='Subseção',
+        help_text='Subseção onde o equipamento está instalado (opcional)'
+    )
+    
     # Tipo de equipamento
     asset_type = models.CharField(
         'Tipo de Equipamento',

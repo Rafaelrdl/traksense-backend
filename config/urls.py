@@ -34,4 +34,13 @@ urlpatterns = [
     
     # Alerts & Rules API (tenant-specific data)
     path('api/alerts/', include('apps.alerts.urls')),
+    
+    # Locations API (Company, Sector, Subsection hierarchy)
+    path('api/locations/', include('apps.locations.urls')),
+    
+    # Inventory API (Categories, Items, Movements)
+    path('api/inventory/', include('apps.inventory.urls')),
+    
+    # CMMS API (Work Orders, Requests, Maintenance Plans)
+    path('api/cmms/', include('apps.cmms.urls')),
 ]

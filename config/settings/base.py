@@ -90,6 +90,9 @@ TENANT_APPS = [
     'apps.ingest',  # MQTT telemetry ingestion
     'apps.assets',  # Catálogo de Ativos (Sites, Assets, Devices, Sensors)
     'apps.alerts',  # Sistema de Alertas e Regras
+    'apps.locations',  # Hierarquia de Localizações (Company, Sector, Subsection)
+    'apps.inventory',  # Gestão de Estoque (Categorias, Itens, Movimentações)
+    'apps.cmms',  # CMMS - Ordens de Serviço, Solicitações, Planos de Manutenção
 ]
 
 
