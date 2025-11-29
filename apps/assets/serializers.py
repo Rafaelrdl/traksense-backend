@@ -72,6 +72,11 @@ class AssetListSerializer(serializers.ModelSerializer):
     site_name = serializers.CharField(source='site.name', read_only=True)
     device_count = serializers.SerializerMethodField()
     
+    # Campos de localização (Company/Sector/Subsection)
+    company_id = serializers.SerializerMethodField()
+    sector_name = serializers.CharField(source='sector.name', read_only=True, allow_null=True)
+    subsection_name = serializers.CharField(source='subsection.name', read_only=True, allow_null=True)
+    
     class Meta:
         model = Asset
         fields = [
@@ -88,12 +93,24 @@ class AssetListSerializer(serializers.ModelSerializer):
             'device_count',
             'created_at',
             'updated_at',
+            # Campos de localização
+            'sector',
+            'subsection',
+            'company_id',
+            'sector_name',
+            'subsection_name',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'device_count']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'device_count', 'company_id', 'sector_name', 'subsection_name']
     
     def get_device_count(self, obj):
         """Retorna o número de dispositivos conectados a este ativo."""
         return obj.devices.count()
+    
+    def get_company_id(self, obj):
+        """Retorna o ID da empresa via setor."""
+        if obj.sector and obj.sector.company:
+            return obj.sector.company.id
+        return None
 
 
 class AssetSerializer(serializers.ModelSerializer):

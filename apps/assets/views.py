@@ -289,7 +289,7 @@ class AssetViewSet(viewsets.ModelViewSet):
         - tag, name, status, health_score, created_at (padrão: tag)
     """
     
-    queryset = Asset.objects.select_related('site').all()
+    queryset = Asset.objects.select_related('site', 'sector', 'sector__company', 'subsection').all()
     permission_classes = [IsAuthenticated, CanWrite]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['site', 'asset_type', 'status', 'manufacturer']
