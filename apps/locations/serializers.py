@@ -23,6 +23,12 @@ class LocationContactSerializer(serializers.ModelSerializer):
 class SubsectionSerializer(serializers.ModelSerializer):
     """Serializer completo para subseções."""
     
+    # Campos opcionais
+    code = serializers.CharField(required=False, allow_blank=True, max_length=50)
+    description = serializers.CharField(required=False, allow_blank=True)
+    position = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    reference = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    
     company_id = serializers.IntegerField(source='sector.company_id', read_only=True)
     company_name = serializers.CharField(source='sector.company.name', read_only=True)
     sector_name = serializers.CharField(source='sector.name', read_only=True)
@@ -67,7 +73,12 @@ class SectorSerializer(serializers.ModelSerializer):
     description = serializers.CharField(required=False, allow_blank=True)
     floor = serializers.CharField(required=False, allow_blank=True, max_length=20)
     building = serializers.CharField(required=False, allow_blank=True, max_length=100)
-    area = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    responsible_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    responsible_phone = serializers.CharField(required=False, allow_blank=True, max_length=20)
+    responsible_email = serializers.EmailField(required=False, allow_blank=True)
+    area = serializers.DecimalField(required=False, allow_null=True, max_digits=12, decimal_places=2)
+    occupants = serializers.IntegerField(required=False, allow_null=True)
+    hvac_units = serializers.IntegerField(required=False, allow_null=True)
     
     company_name = serializers.CharField(source='company.name', read_only=True)
     supervisor_name = serializers.CharField(source='supervisor.get_full_name', read_only=True)
@@ -82,8 +93,9 @@ class SectorSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'code', 'description', 'is_active',
             'company', 'company_name', 'supervisor', 'supervisor_name',
-            'floor', 'building', 'area', 'full_path',
-            'subsection_count', 'asset_count', 'subsections',
+            'responsible_name', 'responsible_phone', 'responsible_email',
+            'floor', 'building', 'area', 'occupants', 'hvac_units',
+            'full_path', 'subsection_count', 'asset_count', 'subsections',
             'contacts', 'created_at', 'updated_at'
         ]
 
@@ -102,7 +114,8 @@ class SectorListSerializer(serializers.ModelSerializer):
             'id', 'name', 'code', 'description', 'is_active',
             'company', 'company_name',
             'supervisor', 'supervisor_name',
-            'floor', 'building', 'area',
+            'responsible_name', 'responsible_phone', 'responsible_email',
+            'floor', 'building', 'area', 'occupants', 'hvac_units',
             'subsection_count', 'asset_count',
             'created_at', 'updated_at'
         ]

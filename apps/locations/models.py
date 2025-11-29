@@ -108,10 +108,19 @@ class Sector(Location):
         verbose_name='Supervisor'
     )
     
+    # Responsável (campos de texto para não depender de usuário cadastrado)
+    responsible_name = models.CharField('Nome do Responsável', max_length=255, blank=True)
+    responsible_phone = models.CharField('Telefone do Responsável', max_length=20, blank=True)
+    responsible_email = models.EmailField('E-mail do Responsável', blank=True)
+    
     # Localização física
     floor = models.CharField('Andar', max_length=20, blank=True)
     building = models.CharField('Prédio', max_length=100, blank=True)
-    area = models.CharField('Área', max_length=100, blank=True)
+    
+    # Dados operacionais
+    area = models.DecimalField('Área (m²)', max_digits=12, decimal_places=2, null=True, blank=True)
+    occupants = models.PositiveIntegerField('Número de Ocupantes', null=True, blank=True)
+    hvac_units = models.PositiveIntegerField('Unidades HVAC', null=True, blank=True)
     
     class Meta(Location.Meta):
         verbose_name = 'Setor'
