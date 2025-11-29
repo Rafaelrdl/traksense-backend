@@ -105,16 +105,24 @@ class AssetSerializer(serializers.ModelSerializer):
         - full_location: Localização completa (read-only)
         - device_count: Número de dispositivos (read-only)
         - sensor_count: Número total de sensores (read-only)
+        - company_id: ID da empresa (via sector)
+        - sector_name: Nome do setor
+        - subsection_name: Nome da subseção
     
     Campos read-only:
         - id, site_name, full_location, device_count, sensor_count,
-          health_score, created_at, updated_at
+          health_score, created_at, updated_at, company_id, sector_name, subsection_name
     """
     
     site_name = serializers.CharField(source='site.name', read_only=True)
     full_location = serializers.CharField(read_only=True)
     device_count = serializers.SerializerMethodField()
     sensor_count = serializers.SerializerMethodField()
+    
+    # Campos de localização (Company/Sector/Subsection)
+    company_id = serializers.SerializerMethodField()
+    sector_name = serializers.CharField(source='sector.name', read_only=True, allow_null=True)
+    subsection_name = serializers.CharField(source='subsection.name', read_only=True, allow_null=True)
     
     class Meta:
         model = Asset
@@ -140,11 +148,24 @@ class AssetSerializer(serializers.ModelSerializer):
             'sensor_count',
             'created_at',
             'updated_at',
+            # Campos de localização (Company/Sector/Subsection)
+            'sector',
+            'subsection',
+            'company_id',
+            'sector_name',
+            'subsection_name',
         ]
         read_only_fields = [
             'id', 'site_name', 'full_location', 'device_count', 
-            'sensor_count', 'health_score', 'created_at', 'updated_at'
+            'sensor_count', 'health_score', 'created_at', 'updated_at',
+            'company_id', 'sector_name', 'subsection_name'
         ]
+    
+    def get_company_id(self, obj):
+        """Retorna o ID da empresa via setor."""
+        if obj.sector and obj.sector.company:
+            return obj.sector.company.id
+        return None
     
     def get_device_count(self, obj):
         """
