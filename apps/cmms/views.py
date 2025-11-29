@@ -215,7 +215,7 @@ class RequestViewSet(viewsets.ModelViewSet):
     """ViewSet para Solicitações."""
     
     queryset = Request.objects.select_related(
-        'location', 'asset', 'requester', 'work_order'
+        'sector', 'subsection', 'asset', 'requester'
     ).prefetch_related('items__inventory_item')
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
