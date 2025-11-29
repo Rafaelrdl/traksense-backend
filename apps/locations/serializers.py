@@ -58,6 +58,13 @@ class SubsectionListSerializer(serializers.ModelSerializer):
 class SectorSerializer(serializers.ModelSerializer):
     """Serializer completo para setores."""
     
+    # Campos explícitos opcionais
+    code = serializers.CharField(required=False, allow_blank=True, max_length=50)
+    description = serializers.CharField(required=False, allow_blank=True)
+    floor = serializers.CharField(required=False, allow_blank=True, max_length=20)
+    building = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    area = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    
     company_name = serializers.CharField(source='company.name', read_only=True)
     supervisor_name = serializers.CharField(source='supervisor.get_full_name', read_only=True)
     full_path = serializers.CharField(read_only=True)

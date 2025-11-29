@@ -108,7 +108,6 @@ class Sector(Location):
     class Meta(Location.Meta):
         verbose_name = 'Setor'
         verbose_name_plural = 'Setores'
-        unique_together = ['company', 'code']
     
     def __str__(self):
         return f"{self.company.name} > {self.name}"
