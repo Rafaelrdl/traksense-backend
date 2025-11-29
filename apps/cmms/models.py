@@ -142,6 +142,8 @@ class WorkOrder(models.Model):
     
     # Agendamento
     scheduled_date = models.DateField(
+        null=True,
+        blank=True,
         verbose_name='Data Agendada',
         help_text='Data prevista para execução'
     )
@@ -296,6 +298,8 @@ class WorkOrder(models.Model):
     def is_overdue(self) -> bool:
         """Verifica se a OS está atrasada."""
         if self.status in [self.Status.COMPLETED, self.Status.CANCELLED]:
+            return False
+        if not self.scheduled_date:
             return False
         return self.scheduled_date < timezone.now().date()
 

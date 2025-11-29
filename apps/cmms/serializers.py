@@ -282,7 +282,7 @@ class ConvertToWorkOrderSerializer(serializers.Serializer):
     
     type = serializers.ChoiceField(choices=WorkOrder.Type.choices)
     priority = serializers.ChoiceField(choices=WorkOrder.Priority.choices)
-    scheduled_date = serializers.DateField()
+    scheduled_date = serializers.DateField(required=False, allow_null=True)
     assigned_to = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(),
         required=False,
