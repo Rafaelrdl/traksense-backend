@@ -115,7 +115,7 @@ class CompanySerializer(serializers.ModelSerializer):
     cnpj = serializers.CharField(required=False, allow_blank=True, max_length=18)
     address = serializers.CharField(required=False, allow_blank=True)
     city = serializers.CharField(required=False, allow_blank=True, max_length=100)
-    state = serializers.CharField(required=False, allow_blank=True, max_length=2)
+    state = serializers.CharField(required=False, allow_blank=True, max_length=50)  # Aumentado para suportar nome completo
     phone = serializers.CharField(required=False, allow_blank=True, max_length=20)
     email = serializers.EmailField(required=False, allow_blank=True)
     

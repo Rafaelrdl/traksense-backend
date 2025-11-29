@@ -41,7 +41,7 @@ class Company(Location):
     cnpj = models.CharField('CNPJ', max_length=18, blank=True)
     address = models.TextField('Endereço', blank=True)
     city = models.CharField('Cidade', max_length=100, blank=True)
-    state = models.CharField('Estado', max_length=2, blank=True)
+    state = models.CharField('Estado', max_length=50, blank=True)  # Aumentado para suportar nome completo
     phone = models.CharField('Telefone', max_length=20, blank=True)
     email = models.EmailField('E-mail', blank=True)
     
