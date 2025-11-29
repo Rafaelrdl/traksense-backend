@@ -42,14 +42,22 @@ class Company(Location):
     address = models.TextField('Endereço', blank=True)
     city = models.CharField('Cidade', max_length=100, blank=True)
     state = models.CharField('Estado', max_length=50, blank=True)  # Aumentado para suportar nome completo
-    phone = models.CharField('Telefone', max_length=20, blank=True)
-    email = models.EmailField('E-mail', blank=True)
+    zip_code = models.CharField('CEP', max_length=10, blank=True)
+    
+    # Responsável (campos de texto para não depender de usuário cadastrado)
+    responsible_name = models.CharField('Nome do Responsável', max_length=255, blank=True)
+    responsible_role = models.CharField('Cargo do Responsável', max_length=100, blank=True)
+    
+    # Dados operacionais
+    total_area = models.DecimalField('Área Total (m²)', max_digits=12, decimal_places=2, null=True, blank=True)
+    occupants = models.PositiveIntegerField('Número de Ocupantes', null=True, blank=True)
+    hvac_units = models.PositiveIntegerField('Unidades HVAC', null=True, blank=True)
     
     # Configurações
     logo = models.ImageField('Logo', upload_to='companies/logos/', blank=True, null=True)
     timezone = models.CharField('Fuso Horário', max_length=50, default='America/Sao_Paulo')
     
-    # Responsável
+    # Gestor (usuário do sistema)
     manager = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

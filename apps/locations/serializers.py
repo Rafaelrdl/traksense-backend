@@ -45,13 +45,17 @@ class SubsectionListSerializer(serializers.ModelSerializer):
     
     sector_name = serializers.CharField(source='sector.name', read_only=True)
     company_name = serializers.CharField(source='sector.company.name', read_only=True)
+    company_id = serializers.IntegerField(source='sector.company_id', read_only=True)
     asset_count = serializers.IntegerField(read_only=True)
     
     class Meta:
         model = Subsection
         fields = [
-            'id', 'name', 'code', 'is_active',
-            'sector', 'sector_name', 'company_name', 'asset_count'
+            'id', 'name', 'code', 'description', 'is_active',
+            'sector', 'sector_name', 'company_id', 'company_name',
+            'position', 'reference',
+            'asset_count',
+            'created_at', 'updated_at'
         ]
 
 
@@ -88,14 +92,19 @@ class SectorListSerializer(serializers.ModelSerializer):
     """Serializer resumido para listagem de setores."""
     
     company_name = serializers.CharField(source='company.name', read_only=True)
+    supervisor_name = serializers.CharField(source='supervisor.get_full_name', read_only=True, allow_null=True)
     subsection_count = serializers.IntegerField(read_only=True)
     asset_count = serializers.IntegerField(read_only=True)
     
     class Meta:
         model = Sector
         fields = [
-            'id', 'name', 'code', 'is_active',
-            'company', 'company_name', 'subsection_count', 'asset_count'
+            'id', 'name', 'code', 'description', 'is_active',
+            'company', 'company_name',
+            'supervisor', 'supervisor_name',
+            'floor', 'building', 'area',
+            'subsection_count', 'asset_count',
+            'created_at', 'updated_at'
         ]
 
 
@@ -123,8 +132,14 @@ class CompanySerializer(serializers.ModelSerializer):
     address = serializers.CharField(required=False, allow_blank=True)
     city = serializers.CharField(required=False, allow_blank=True, max_length=100)
     state = serializers.CharField(required=False, allow_blank=True, max_length=50)  # Aumentado para suportar nome completo
-    phone = serializers.CharField(required=False, allow_blank=True, max_length=20)
-    email = serializers.EmailField(required=False, allow_blank=True)
+    zip_code = serializers.CharField(required=False, allow_blank=True, max_length=10)
+    
+    # Campos de dados operacionais
+    responsible_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    responsible_role = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    total_area = serializers.DecimalField(required=False, allow_null=True, max_digits=12, decimal_places=2)
+    occupants = serializers.IntegerField(required=False, default=0)
+    hvac_units = serializers.IntegerField(required=False, default=0)
     
     manager_name = serializers.CharField(source='manager.get_full_name', read_only=True)
     sector_count = serializers.IntegerField(read_only=True)
@@ -136,7 +151,8 @@ class CompanySerializer(serializers.ModelSerializer):
         model = Company
         fields = [
             'id', 'name', 'code', 'description', 'is_active',
-            'cnpj', 'address', 'city', 'state', 'phone', 'email',
+            'cnpj', 'address', 'city', 'state', 'zip_code',
+            'responsible_name', 'responsible_role', 'total_area', 'occupants', 'hvac_units',
             'logo', 'timezone', 'manager', 'manager_name',
             'sector_count', 'asset_count', 'sectors',
             'contacts', 'created_at', 'updated_at'
@@ -148,12 +164,17 @@ class CompanyListSerializer(serializers.ModelSerializer):
     
     sector_count = serializers.IntegerField(read_only=True)
     asset_count = serializers.IntegerField(read_only=True)
+    manager_name = serializers.CharField(source='manager.get_full_name', read_only=True, allow_null=True)
     
     class Meta:
         model = Company
         fields = [
-            'id', 'name', 'code', 'city', 'state', 'is_active',
-            'sector_count', 'asset_count'
+            'id', 'name', 'code', 'description', 'is_active',
+            'cnpj', 'address', 'city', 'state', 'zip_code',
+            'responsible_name', 'responsible_role', 'total_area', 'occupants', 'hvac_units',
+            'manager', 'manager_name',
+            'sector_count', 'asset_count',
+            'created_at', 'updated_at'
         ]
 
 
