@@ -84,6 +84,7 @@ class TenantMembership(models.Model):
     - owner: Full access, can delete tenant, manage billing
     - admin: Full access except tenant deletion and billing
     - operator: Read/write access to assets, sensors, telemetry
+    - technician: Can execute work orders and update equipment status
     - viewer: Read-only access to all data
     """
     
@@ -91,6 +92,7 @@ class TenantMembership(models.Model):
         ('owner', 'Owner'),
         ('admin', 'Administrator'),
         ('operator', 'Operator'),
+        ('technician', 'Technician'),
         ('viewer', 'Viewer'),
     ]
     
