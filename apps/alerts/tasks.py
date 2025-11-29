@@ -9,10 +9,94 @@ This module contains periodic tasks that:
 
 import logging
 from datetime import timedelta
+from typing import Tuple
 from django.utils import timezone
+from django.conf import settings
 from celery import shared_task
 
 logger = logging.getLogger(__name__)
+
+
+# Default cooldown settings (can be overridden per user)
+DEFAULT_ALERT_COOLDOWN_MINUTES = 60  # 1 hour between alerts for same variable
+ACKNOWLEDGED_CHECK_INTERVAL_MINUTES = 60  # Check every 1 hour if alert still acknowledged
+RESOLVED_COOLDOWN_MINUTES = 30  # Can generate new alert 30 min after resolution
+
+
+def check_alert_cooldown(rule, parameter_key: str) -> Tuple[bool, str]:
+    """
+    Check if a new alert can be generated for the given rule and parameter.
+    
+    Logic:
+    1. If there's a recent active (unacknowledged) alert within cooldown period -> NO
+    2. If there's an acknowledged (not resolved) alert -> NO (check every hour)
+    3. If there's a resolved alert within 30 minutes -> NO
+    4. Otherwise -> YES, can generate alert
+    
+    Args:
+        rule: Rule model instance
+        parameter_key: The parameter/sensor key to check
+    
+    Returns:
+        Tuple[bool, str]: (can_generate_alert, reason)
+    """
+    from apps.alerts.models import Alert
+    
+    now = timezone.now()
+    
+    # Get cooldown from rule creator's preferences, or use default
+    cooldown_minutes = DEFAULT_ALERT_COOLDOWN_MINUTES
+    if rule.created_by and hasattr(rule.created_by, 'alert_cooldown_minutes'):
+        cooldown_minutes = rule.created_by.alert_cooldown_minutes or DEFAULT_ALERT_COOLDOWN_MINUTES
+    
+    # 1. Check for active (unacknowledged) alerts within cooldown period
+    cooldown_period = timedelta(minutes=cooldown_minutes)
+    active_alert = Alert.objects.filter(
+        rule=rule,
+        parameter_key=parameter_key,
+        acknowledged=False,
+        resolved=False,
+        triggered_at__gte=now - cooldown_period
+    ).first()
+    
+    if active_alert:
+        time_since = (now - active_alert.triggered_at).total_seconds() / 60
+        remaining = cooldown_minutes - time_since
+        return False, f"Active alert exists (triggered {time_since:.0f}min ago, cooldown remaining: {remaining:.0f}min)"
+    
+    # 2. Check for acknowledged (not resolved) alerts - blocks new alerts
+    # Check every hour if still acknowledged
+    acknowledged_alert = Alert.objects.filter(
+        rule=rule,
+        parameter_key=parameter_key,
+        acknowledged=True,
+        resolved=False
+    ).order_by('-acknowledged_at').first()
+    
+    if acknowledged_alert:
+        # Calculate time since last check (using acknowledged_at as reference)
+        time_since_ack = (now - acknowledged_alert.acknowledged_at).total_seconds() / 60 if acknowledged_alert.acknowledged_at else 0
+        check_interval = ACKNOWLEDGED_CHECK_INTERVAL_MINUTES
+        
+        # Only log/re-evaluate every hour, don't create new alerts while acknowledged
+        return False, f"Alert is acknowledged but not resolved (ack'd {time_since_ack:.0f}min ago). Will re-check after {check_interval}min."
+    
+    # 3. Check for recently resolved alerts (within 30 minutes)
+    resolved_cooldown = timedelta(minutes=RESOLVED_COOLDOWN_MINUTES)
+    recently_resolved = Alert.objects.filter(
+        rule=rule,
+        parameter_key=parameter_key,
+        resolved=True,
+        resolved_at__gte=now - resolved_cooldown
+    ).first()
+    
+    if recently_resolved:
+        time_since_resolved = (now - recently_resolved.resolved_at).total_seconds() / 60
+        remaining = RESOLVED_COOLDOWN_MINUTES - time_since_resolved
+        return False, f"Alert was recently resolved ({time_since_resolved:.0f}min ago), cooldown remaining: {remaining:.0f}min"
+    
+    # All checks passed - can generate new alert
+    return True, "OK"
 
 
 @shared_task(name='alerts.evaluate_rules')
@@ -213,18 +297,12 @@ def evaluate_single_rule(rule):
     alerts_created = []
     
     for param in parameters:
-        # Check cooldown por parâmetro
-        cooldown_period = timedelta(minutes=param.duration)
-        last_alert = Alert.objects.filter(
-            rule=rule,
-            parameter_key=param.parameter_key,
-            triggered_at__gte=timezone.now() - cooldown_period
-        ).first()
+        # Check cooldown com lógica avançada
+        can_alert, reason = check_alert_cooldown(rule, param.parameter_key)
         
-        if last_alert:
+        if not can_alert:
             logger.debug(
-                f"Rule {rule.id} parameter {param.parameter_key} is in cooldown period "
-                f"(last alert at {last_alert.triggered_at})"
+                f"Rule {rule.id} parameter {param.parameter_key} cannot trigger: {reason}"
             )
             continue
     
@@ -348,16 +426,12 @@ def evaluate_single_rule_legacy(rule):
     from apps.ingest.models import Reading
     from apps.assets.models import Sensor  # 🔧 Import necessário para buscar device correto
     
-    # Check cooldown
-    cooldown_period = timedelta(minutes=rule.duration)
-    last_alert = Alert.objects.filter(
-        rule=rule,
-        triggered_at__gte=timezone.now() - cooldown_period
-    ).first()
+    # Check cooldown com lógica avançada
+    can_alert, reason = check_alert_cooldown(rule, rule.parameter_key)
     
-    if last_alert:
+    if not can_alert:
         logger.debug(
-            f"Rule {rule.id} is in cooldown period (last alert at {last_alert.triggered_at})"
+            f"Rule {rule.id} cannot trigger: {reason}"
         )
         return None
     

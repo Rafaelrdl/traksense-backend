@@ -37,6 +37,13 @@ class User(AbstractUser):
         default='24h'
     )
     
+    # Alert preferences
+    alert_cooldown_minutes = models.PositiveIntegerField(
+        'Alert Cooldown (minutes)',
+        default=60,
+        help_text='Minimum interval between alerts for the same variable (in minutes)'
+    )
+    
     # Status
     email_verified = models.BooleanField('Email Verified', default=False)
     last_login_ip = models.GenericIPAddressField('Last Login IP', blank=True, null=True)
