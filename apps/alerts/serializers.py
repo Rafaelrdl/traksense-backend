@@ -198,9 +198,23 @@ class AlertSerializer(serializers.ModelSerializer):
     
     rule_name = serializers.SerializerMethodField()
     equipment_name = serializers.SerializerMethodField()
+    severity_display = serializers.SerializerMethodField()
     acknowledged_by_email = serializers.CharField(source='acknowledged_by.email', read_only=True, allow_null=True)
     resolved_by_email = serializers.CharField(source='resolved_by.email', read_only=True, allow_null=True)
     is_active = serializers.BooleanField(read_only=True)
+    
+    # Mapeamento de severidade para português
+    SEVERITY_LABELS = {
+        'Critical': 'Crítico',
+        'High': 'Alto',
+        'Medium': 'Médio',
+        'Low': 'Baixo',
+        # Variantes em maiúsculo
+        'CRITICAL': 'Crítico',
+        'HIGH': 'Alto',
+        'MEDIUM': 'Médio',
+        'LOW': 'Baixo',
+    }
     
     def get_rule_name(self, obj):
         """Retorna nome da regra ou indicação de regra deletada"""
@@ -212,6 +226,10 @@ class AlertSerializer(serializers.ModelSerializer):
             return obj.rule.equipment.name
         return obj.asset_tag  # Fallback para o asset_tag armazenado no alerta
     
+    def get_severity_display(self, obj):
+        """Retorna a severidade traduzida para português"""
+        return self.SEVERITY_LABELS.get(obj.severity, obj.severity)
+    
     class Meta:
         model = Alert
         fields = [
@@ -221,6 +239,7 @@ class AlertSerializer(serializers.ModelSerializer):
             'equipment_name',
             'message',
             'severity',
+            'severity_display',
             'asset_tag',
             'parameter_key',
             'parameter_value',
