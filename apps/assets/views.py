@@ -430,6 +430,14 @@ class AssetViewSet(viewsets.ModelViewSet):
         # Aplicar filtros
         queryset = self.filter_queryset(self.get_queryset())
         
+        # Select related para otimizar queries de FK (site, sector, subsection)
+        queryset = queryset.select_related(
+            'site',
+            'sector',
+            'sector__company',
+            'subsection'
+        )
+        
         # Prefetch para otimizar N+1 queries
         queryset = queryset.prefetch_related(
             Prefetch(

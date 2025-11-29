@@ -215,6 +215,15 @@ class AssetCompleteSerializer(serializers.ModelSerializer):
     
     site_name = serializers.CharField(source='site.name', read_only=True)
     site_company = serializers.CharField(source='site.company', read_only=True)
+    site_sector = serializers.CharField(source='site.sector', read_only=True)
+    site_subsector = serializers.CharField(source='site.subsector', read_only=True)
+    # Campos do relacionamento direto com locations
+    sector_id = serializers.IntegerField(source='sector.id', read_only=True, allow_null=True)
+    sector_name = serializers.CharField(source='sector.name', read_only=True, allow_null=True)
+    subsection_id = serializers.IntegerField(source='subsection.id', read_only=True, allow_null=True)
+    subsection_name = serializers.CharField(source='subsection.name', read_only=True, allow_null=True)
+    company_id = serializers.SerializerMethodField()
+    company_name = serializers.SerializerMethodField()
     full_location = serializers.CharField(read_only=True)
     device_count = serializers.SerializerMethodField()
     sensor_count = serializers.SerializerMethodField()
@@ -232,6 +241,14 @@ class AssetCompleteSerializer(serializers.ModelSerializer):
             'site',
             'site_name',
             'site_company',
+            'site_sector',
+            'site_subsector',
+            'sector_id',
+            'sector_name',
+            'subsection_id',
+            'subsection_name',
+            'company_id',
+            'company_name',
             'full_location',
             'asset_type',
             'asset_type_other',
@@ -254,6 +271,18 @@ class AssetCompleteSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = fields
+    
+    def get_company_id(self, obj):
+        """Obtém o ID da empresa do setor"""
+        if obj.sector and obj.sector.company:
+            return obj.sector.company.id
+        return None
+    
+    def get_company_name(self, obj):
+        """Obtém o nome da empresa do setor"""
+        if obj.sector and obj.sector.company:
+            return obj.sector.company.name
+        return None
     
     def get_device_count(self, obj):
         """Total de dispositivos ativos."""
