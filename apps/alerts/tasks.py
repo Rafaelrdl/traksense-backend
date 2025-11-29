@@ -496,7 +496,9 @@ def generate_alert_message_from_template(template, param, reading, value):
         
         # Substituir variáveis no template
         message = template
-        message = message.replace('{sensor}', param.parameter_key)
+        # Suporta {variavel} e {sensor} (legado) para o nome da variável
+        message = message.replace('{variavel}', param.parameter_key)
+        message = message.replace('{sensor}', param.parameter_key)  # Compatibilidade com templates antigos
         message = message.replace('{value}', str(value))
         message = message.replace('{threshold}', str(param.threshold))
         message = message.replace('{operator}', operator_map.get(param.operator, param.operator))

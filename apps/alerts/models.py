@@ -54,7 +54,7 @@ class RuleParameter(models.Model):
     severity = models.CharField(max_length=20, choices=SEVERITY_CHOICES, default='Medium', verbose_name='Severidade')
     message_template = models.TextField(
         verbose_name='Template da Mensagem',
-        help_text='Use {sensor}, {value}, {threshold}, {operator}, {unit} como variáveis'
+        help_text='Use {variavel}, {value}, {threshold}, {operator}, {unit} como variáveis'
     )
     
     # Ordem de exibição
