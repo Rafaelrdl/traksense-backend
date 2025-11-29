@@ -9,6 +9,25 @@ from .models import Rule, RuleParameter, Alert, NotificationPreference
 class RuleParameterSerializer(serializers.ModelSerializer):
     """Serializer para RuleParameter"""
     
+    # Campo extra para receber do frontend (não persiste no banco)
+    device = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    
+    # Sobrescrever o campo severity para aceitar tanto UPPERCASE quanto TitleCase
+    severity = serializers.CharField(max_length=20)
+    
+    # Mapeamento de severidade UPPERCASE -> TitleCase
+    SEVERITY_MAP = {
+        'CRITICAL': 'Critical',
+        'HIGH': 'High',
+        'MEDIUM': 'Medium',
+        'LOW': 'Low',
+        # Também aceitar TitleCase
+        'Critical': 'Critical',
+        'High': 'High',
+        'Medium': 'Medium',
+        'Low': 'Low',
+    }
+    
     class Meta:
         model = RuleParameter
         fields = [
@@ -22,6 +41,7 @@ class RuleParameterSerializer(serializers.ModelSerializer):
             'severity',
             'message_template',
             'order',
+            'device',  # Campo extra do frontend
         ]
         read_only_fields = ['id']
         # Tornar alguns campos opcionais para evitar erros
@@ -30,6 +50,12 @@ class RuleParameterSerializer(serializers.ModelSerializer):
             'unit': {'required': False, 'allow_blank': True},
             'order': {'required': False, 'default': 0},
         }
+    
+    def validate_severity(self, value):
+        """Converte severidade de UPPERCASE para TitleCase"""
+        if value in self.SEVERITY_MAP:
+            return self.SEVERITY_MAP[value]
+        raise serializers.ValidationError(f"Severidade inválida: {value}")
     
     def validate_duration(self, value):
         """Valida que duration seja positivo"""
@@ -56,6 +82,14 @@ class RuleSerializer(serializers.ModelSerializer):
     
     # Nested serializer para múltiplos parâmetros
     parameters = RuleParameterSerializer(many=True, required=False)
+    
+    # Mapeamento de severidade UPPERCASE -> TitleCase
+    SEVERITY_MAP = {
+        'CRITICAL': 'Critical',
+        'HIGH': 'High',
+        'MEDIUM': 'Medium',
+        'LOW': 'Low',
+    }
     
     class Meta:
         model = Rule
@@ -85,6 +119,12 @@ class RuleSerializer(serializers.ModelSerializer):
             'condition_display',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'created_by']
+    
+    def validate_severity(self, value):
+        """Converte severidade de UPPERCASE para TitleCase"""
+        if value and value.upper() in self.SEVERITY_MAP:
+            return self.SEVERITY_MAP[value.upper()]
+        return value
     
     def validate_actions(self, value):
         """Valida que actions seja uma lista de strings válidas"""
@@ -156,6 +196,8 @@ class RuleSerializer(serializers.ModelSerializer):
         if parameters_data:
             for idx, param_data in enumerate(parameters_data):
                 param_data['order'] = idx
+                # Remover campo 'device' que vem do frontend (não persiste no banco)
+                param_data.pop('device', None)
                 RuleParameter.objects.create(rule=rule, **param_data)
         
         return rule
@@ -188,6 +230,8 @@ class RuleSerializer(serializers.ModelSerializer):
             # Criar novos parâmetros
             for idx, param_data in enumerate(parameters_data):
                 param_data['order'] = idx
+                # Remover campo 'device' que vem do frontend (não persiste no banco)
+                param_data.pop('device', None)
                 RuleParameter.objects.create(rule=instance, **param_data)
         
         return instance
@@ -201,6 +245,7 @@ class AlertSerializer(serializers.ModelSerializer):
     severity_display = serializers.SerializerMethodField()
     acknowledged_by_email = serializers.CharField(source='acknowledged_by.email', read_only=True, allow_null=True)
     resolved_by_email = serializers.CharField(source='resolved_by.email', read_only=True, allow_null=True)
+    work_order_number = serializers.CharField(source='work_order.number', read_only=True, allow_null=True)
     is_active = serializers.BooleanField(read_only=True)
     
     # Mapeamento de severidade para português
@@ -253,6 +298,8 @@ class AlertSerializer(serializers.ModelSerializer):
             'resolved_at',
             'resolved_by',
             'resolved_by_email',
+            'work_order',
+            'work_order_number',
             'notes',
             'is_active',
         ]

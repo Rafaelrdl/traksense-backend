@@ -66,6 +66,24 @@ class RuleViewSet(viewsets.ModelViewSet):
         """Salva o criador da regra"""
         serializer.save(created_by=self.request.user)
     
+    def update(self, request, *args, **kwargs):
+        """Override para logging de erros de validação"""
+        logger.info(f"📝 Rule UPDATE request data: {request.data}")
+        response = super().update(request, *args, **kwargs)
+        return response
+    
+    def partial_update(self, request, *args, **kwargs):
+        """Override para logging de erros de validação"""
+        logger.info(f"📝 Rule PATCH request data: {request.data}")
+        partial = kwargs.pop('partial', True)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        if not serializer.is_valid():
+            logger.error(f"❌ Rule PATCH validation errors: {serializer.errors}")
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return Response(serializer.data)
+    
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsTenantMember, CanWrite])
     def toggle_status(self, request, pk=None):
         """Ativa/desativa uma regra"""
@@ -182,6 +200,55 @@ class AlertViewSet(viewsets.ModelViewSet):
         return Response({
             'status': 'acknowledged',
             'alert': response_serializer.data
+        })
+    
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsTenantMember, CanWrite])
+    def link_work_order(self, request, pk=None):
+        """Vincula uma ordem de serviço ao alerta e o reconhece automaticamente"""
+        from apps.cmms.models import WorkOrder
+        
+        alert = self.get_object()
+        work_order_id = request.data.get('work_order_id')
+        
+        if not work_order_id:
+            return Response(
+                {'error': 'work_order_id é obrigatório'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            work_order = WorkOrder.objects.get(id=work_order_id)
+        except WorkOrder.DoesNotExist:
+            return Response(
+                {'error': 'Ordem de serviço não encontrada'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Vincula a OS ao alerta
+        alert.work_order = work_order
+        
+        # Se não estava reconhecido, reconhece automaticamente
+        if not alert.acknowledged:
+            alert.acknowledged = True
+            alert.acknowledged_at = timezone.now()
+            alert.acknowledged_by = request.user
+            
+            # Adiciona nota sobre a criação da OS
+            note = f"[OS Criada] Vinculado à OS #{work_order.number}"
+            alert.notes = f"{alert.notes}\n{note}" if alert.notes else note
+        
+        alert.save()
+        
+        logger.info(
+            f"🔗 Alert #{alert.id} linked to WorkOrder #{work_order.number} "
+            f"by user {request.user.email}"
+        )
+        
+        response_serializer = self.get_serializer(alert)
+        return Response({
+            'status': 'linked',
+            'alert': response_serializer.data,
+            'work_order_number': work_order.number
         })
     
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsTenantMember, CanWrite])

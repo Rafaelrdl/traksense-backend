@@ -230,6 +230,16 @@ class Alert(models.Model):
         verbose_name='Resolvido por'
     )
     
+    # Ordem de Serviço vinculada
+    work_order = models.ForeignKey(
+        'cmms.WorkOrder',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='alerts',
+        verbose_name='Ordem de Serviço'
+    )
+    
     # Notas
     notes = models.TextField(blank=True, verbose_name='Notas')
     
