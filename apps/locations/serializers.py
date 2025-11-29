@@ -109,6 +109,16 @@ class SectorNestedSerializer(serializers.ModelSerializer):
 class CompanySerializer(serializers.ModelSerializer):
     """Serializer completo para empresas."""
     
+    # Campos explícitos opcionais
+    code = serializers.CharField(required=False, allow_blank=True, max_length=50)
+    description = serializers.CharField(required=False, allow_blank=True)
+    cnpj = serializers.CharField(required=False, allow_blank=True, max_length=18)
+    address = serializers.CharField(required=False, allow_blank=True)
+    city = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    state = serializers.CharField(required=False, allow_blank=True, max_length=2)
+    phone = serializers.CharField(required=False, allow_blank=True, max_length=20)
+    email = serializers.EmailField(required=False, allow_blank=True)
+    
     manager_name = serializers.CharField(source='manager.get_full_name', read_only=True)
     sector_count = serializers.IntegerField(read_only=True)
     asset_count = serializers.IntegerField(read_only=True)

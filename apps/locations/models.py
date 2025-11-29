@@ -62,7 +62,6 @@ class Company(Location):
     class Meta(Location.Meta):
         verbose_name = 'Empresa'
         verbose_name_plural = 'Empresas'
-        unique_together = ['code']
     
     @property
     def sector_count(self):
