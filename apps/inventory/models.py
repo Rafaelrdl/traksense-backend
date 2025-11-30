@@ -149,6 +149,7 @@ class InventoryItem(models.Model):
     
     # Imagem
     image = models.ImageField('Imagem', upload_to='inventory/items/', blank=True, null=True)
+    image_url = models.TextField('URL da Imagem', blank=True, null=True, help_text='URL ou Data URI da imagem')
     
     # Status
     is_active = models.BooleanField('Ativo', default=True)

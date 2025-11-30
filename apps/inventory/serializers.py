@@ -79,7 +79,7 @@ class InventoryItemSerializer(serializers.ModelSerializer):
             'reorder_point', 'unit_cost', 'last_purchase_cost', 'total_value',
             'location', 'shelf', 'bin',
             'supplier', 'supplier_code', 'lead_time_days',
-            'image', 'is_active', 'is_critical', 'notes',
+            'image', 'image_url', 'is_active', 'is_critical', 'notes',
             'is_low_stock', 'is_out_of_stock', 'needs_reorder', 'stock_status',
             'created_at', 'updated_at'
         ]
