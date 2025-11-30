@@ -23,6 +23,7 @@ from .serializers import (
     ConvertToWorkOrderSerializer,
     MaintenancePlanSerializer, MaintenancePlanListSerializer
 )
+from apps.inventory.models import InventoryMovement
 
 
 class ChecklistTemplateViewSet(viewsets.ModelViewSet):
@@ -182,14 +183,52 @@ class WorkOrderViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='items')
     def add_item(self, request, pk=None):
-        """Adiciona item de estoque à OS."""
+        """Adiciona item de estoque à OS e registra saída do estoque."""
         work_order = self.get_object()
         
         serializer = WorkOrderItemSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save(work_order=work_order)
+        work_order_item = serializer.save(work_order=work_order)
+        
+        # Registrar saída no estoque
+        InventoryMovement.objects.create(
+            item=work_order_item.inventory_item,
+            type=InventoryMovement.MovementType.OUT,
+            reason=InventoryMovement.Reason.WORK_ORDER,
+            quantity=work_order_item.quantity,
+            work_order=work_order,
+            reference=f"OS {work_order.number}",
+            performed_by=request.user
+        )
         
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['delete'], url_path='items/(?P<item_id>[^/.]+)')
+    def delete_item(self, request, pk=None, item_id=None):
+        """Remove item de estoque da OS e devolve ao estoque."""
+        work_order = self.get_object()
+        
+        try:
+            work_order_item = WorkOrderItem.objects.get(id=item_id, work_order=work_order)
+            
+            # Registrar devolução ao estoque
+            InventoryMovement.objects.create(
+                item=work_order_item.inventory_item,
+                type=InventoryMovement.MovementType.RETURN,
+                reason=InventoryMovement.Reason.RETURN_STOCK,
+                quantity=work_order_item.quantity,
+                work_order=work_order,
+                reference=f"Devolução OS {work_order.number}",
+                performed_by=request.user
+            )
+            
+            work_order_item.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except WorkOrderItem.DoesNotExist:
+            return Response(
+                {'error': 'Item não encontrado'},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
     @action(detail=False, methods=['get'])
     def stats(self, request):

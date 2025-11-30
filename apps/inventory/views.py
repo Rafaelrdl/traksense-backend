@@ -259,6 +259,78 @@ class InventoryMovementViewSet(viewsets.ModelViewSet):
             'by_reason': list(by_reason),
         })
 
+    @action(detail=False, methods=['get'])
+    def consumption_by_category(self, request):
+        """Retorna consumo (saídas) agrupado por categoria no período."""
+        days = int(request.query_params.get('days', 90))
+        start_date = timezone.now() - timezone.timedelta(days=days)
+        
+        # Filtrar apenas saídas (OUT) no período
+        movements = self.queryset.filter(
+            created_at__gte=start_date,
+            type=InventoryMovement.MovementType.OUT
+        ).select_related('item__category')
+        
+        # Agrupar por categoria
+        consumption = movements.values(
+            'item__category__id',
+            'item__category__name'
+        ).annotate(
+            total_consumed=Sum('quantity')
+        ).order_by('-total_consumed')
+        
+        # Formatar resultado
+        result = [
+            {
+                'category_id': item['item__category__id'],
+                'category_name': item['item__category__name'] or 'Sem Categoria',
+                'total_consumed': int(item['total_consumed']) if item['total_consumed'] else 0
+            }
+            for item in consumption
+            if item['total_consumed'] and item['total_consumed'] > 0
+        ]
+        
+        return Response(result)
+
+    @action(detail=False, methods=['get'])
+    def top_consumed_items(self, request):
+        """Retorna os itens mais consumidos no período."""
+        days = int(request.query_params.get('days', 90))
+        limit = int(request.query_params.get('limit', 5))
+        start_date = timezone.now() - timezone.timedelta(days=days)
+        
+        # Filtrar apenas saídas (OUT) no período
+        movements = self.queryset.filter(
+            created_at__gte=start_date,
+            type=InventoryMovement.MovementType.OUT
+        ).select_related('item', 'item__category')
+        
+        # Agrupar por item
+        consumption = movements.values(
+            'item__id',
+            'item__name',
+            'item__code',
+            'item__unit',
+            'item__category__name'
+        ).annotate(
+            total_consumed=Sum('quantity')
+        ).order_by('-total_consumed')[:limit]
+        
+        # Formatar resultado
+        result = [
+            {
+                'item_id': item['item__id'],
+                'item_name': item['item__name'],
+                'item_sku': item['item__code'],
+                'item_unit': item['item__unit'],
+                'category_name': item['item__category__name'] or 'Sem Categoria',
+                'total_consumed': int(item['total_consumed']) if item['total_consumed'] else 0
+            }
+            for item in consumption
+        ]
+        
+        return Response(result)
+
 
 class InventoryCountViewSet(viewsets.ModelViewSet):
     """ViewSet para Contagens de Inventário."""
