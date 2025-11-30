@@ -162,6 +162,24 @@ class WorkOrderViewSet(viewsets.ModelViewSet):
         serializer = WorkOrderPhotoSerializer(photo)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=['delete'], url_path='photos/(?P<photo_id>[^/.]+)')
+    def delete_photo(self, request, pk=None, photo_id=None):
+        """Deleta uma foto da OS."""
+        work_order = self.get_object()
+        
+        try:
+            photo = WorkOrderPhoto.objects.get(id=photo_id, work_order=work_order)
+            # Deletar o arquivo físico
+            if photo.file:
+                photo.file.delete(save=False)
+            photo.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except WorkOrderPhoto.DoesNotExist:
+            return Response(
+                {'error': 'Foto não encontrada'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
     @action(detail=True, methods=['post'], url_path='items')
     def add_item(self, request, pk=None):
         """Adiciona item de estoque à OS."""

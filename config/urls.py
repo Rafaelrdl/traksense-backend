@@ -7,6 +7,8 @@ Admin is NOT exposed here - it's centralized in public schema only.
 For public schema URLs, see config.urls_public.
 """
 
+from django.conf import settings
+from django.conf.urls.static import static
 from django.urls import include, path
 from drf_spectacular.views import (
     SpectacularAPIView,
@@ -44,3 +46,7 @@ urlpatterns = [
     # CMMS API (Work Orders, Requests, Maintenance Plans)
     path('api/cmms/', include('apps.cmms.urls')),
 ]
+
+# Serve media files in development
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
