@@ -91,13 +91,20 @@ class InventoryItemListSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
     stock_status = serializers.CharField(read_only=True)
     total_value = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    is_low_stock = serializers.BooleanField(read_only=True)
     
     class Meta:
         model = InventoryItem
         fields = [
-            'id', 'code', 'name', 'category', 'category_name',
-            'unit', 'quantity', 'min_quantity', 'unit_cost', 'total_value',
-            'is_active', 'is_critical', 'stock_status'
+            'id', 'code', 'name', 'description', 'barcode',
+            'category', 'category_name',
+            'unit', 'quantity', 'min_quantity', 'max_quantity',
+            'reorder_point', 'unit_cost', 'total_value',
+            'location', 'shelf', 'bin',
+            'supplier', 'supplier_code',
+            'image', 'image_url',
+            'is_active', 'is_critical', 'is_low_stock', 'stock_status',
+            'created_at', 'updated_at'
         ]
 
 
