@@ -72,13 +72,14 @@ class WorkOrder(models.Model):
     Ordem de Serviço (OS).
     
     Representa uma tarefa de manutenção a ser executada em um ativo.
-    Pode ser preventiva (gerada por plano), corretiva ou emergência.
+    Pode ser preventiva (gerada por plano), corretiva, emergência ou solicitação.
     """
     
     class Type(models.TextChoices):
         PREVENTIVE = 'PREVENTIVE', 'Preventiva'
         CORRECTIVE = 'CORRECTIVE', 'Corretiva'
         EMERGENCY = 'EMERGENCY', 'Emergência'
+        REQUEST = 'REQUEST', 'Solicitação'
 
     class Status(models.TextChoices):
         OPEN = 'OPEN', 'Aberta'

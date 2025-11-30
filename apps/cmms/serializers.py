@@ -278,9 +278,11 @@ class MaintenancePlanSerializer(serializers.ModelSerializer):
 
 
 class ConvertToWorkOrderSerializer(serializers.Serializer):
-    """Serializer para conversão de Request em WorkOrder."""
+    """Serializer para conversão de Request em WorkOrder.
     
-    type = serializers.ChoiceField(choices=WorkOrder.Type.choices)
+    Nota: O tipo é sempre REQUEST para solicitações convertidas (não editável).
+    """
+    
     priority = serializers.ChoiceField(choices=WorkOrder.Priority.choices)
     scheduled_date = serializers.DateField(required=False, allow_null=True)
     assigned_to = serializers.PrimaryKeyRelatedField(

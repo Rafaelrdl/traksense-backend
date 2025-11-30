@@ -315,13 +315,20 @@ class RequestViewSet(viewsets.ModelViewSet):
         serializer = ConvertToWorkOrderSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        # Criar OS
+        # Verificar se a solicitação tem um ativo associado
+        if not req.asset:
+            return Response(
+                {'error': 'Solicitação não possui ativo associado. Não é possível converter.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Criar OS com tipo REQUEST (fixo para solicitações convertidas)
         wo_data = serializer.validated_data
         work_order = WorkOrder.objects.create(
             asset=req.asset,
-            type=wo_data['type'],
+            type=WorkOrder.Type.REQUEST,
             priority=wo_data['priority'],
-            scheduled_date=wo_data['scheduled_date'],
+            scheduled_date=wo_data.get('scheduled_date'),
             assigned_to=wo_data.get('assigned_to'),
             description=wo_data.get('description') or req.note,
             request=req,
