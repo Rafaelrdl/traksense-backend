@@ -73,7 +73,7 @@ class InventoryItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = InventoryItem
         fields = [
-            'id', 'code', 'name', 'description', 'barcode',
+            'id', 'code', 'name', 'manufacturer', 'description', 'barcode',
             'category', 'category_name',
             'unit', 'unit_display', 'quantity', 'min_quantity', 'max_quantity',
             'reorder_point', 'unit_cost', 'last_purchase_cost', 'total_value',
@@ -96,7 +96,7 @@ class InventoryItemListSerializer(serializers.ModelSerializer):
     class Meta:
         model = InventoryItem
         fields = [
-            'id', 'code', 'name', 'description', 'barcode',
+            'id', 'code', 'name', 'manufacturer', 'description', 'barcode',
             'category', 'category_name',
             'unit', 'quantity', 'min_quantity', 'max_quantity',
             'reorder_point', 'unit_cost', 'total_value',

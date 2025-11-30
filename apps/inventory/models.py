@@ -75,6 +75,7 @@ class InventoryItem(models.Model):
     # Identificação
     code = models.CharField('Código', max_length=50, unique=True)
     name = models.CharField('Nome', max_length=255)
+    manufacturer = models.CharField('Fabricante', max_length=255, blank=True)
     description = models.TextField('Descrição', blank=True)
     barcode = models.CharField('Código de Barras', max_length=100, blank=True)
     
