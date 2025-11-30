@@ -36,9 +36,9 @@ class WorkOrderPhotoSerializer(serializers.ModelSerializer):
         model = WorkOrderPhoto
         fields = [
             'id', 'file', 'caption', 
-            'uploaded_by', 'uploaded_by_name', 'created_at'
+            'uploaded_by', 'uploaded_by_name', 'uploaded_at'
         ]
-        read_only_fields = ['id', 'uploaded_by', 'uploaded_by_name', 'created_at']
+        read_only_fields = ['id', 'uploaded_by', 'uploaded_by_name', 'uploaded_at']
 
 
 class WorkOrderItemSerializer(serializers.ModelSerializer):
@@ -121,7 +121,7 @@ class WorkOrderSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'number', 'started_at', 'completed_at',
+            'id', 'number', 'started_at',
             'created_by', 'is_overdue', 'created_at', 'updated_at'
         ]
 
