@@ -9,7 +9,9 @@ from .views import (
     ChecklistTemplateViewSet,
     WorkOrderViewSet,
     RequestViewSet,
-    MaintenancePlanViewSet
+    MaintenancePlanViewSet,
+    ProcedureCategoryViewSet,
+    ProcedureViewSet
 )
 
 
@@ -18,6 +20,8 @@ router.register(r'checklist-templates', ChecklistTemplateViewSet, basename='chec
 router.register(r'work-orders', WorkOrderViewSet, basename='work-order')
 router.register(r'requests', RequestViewSet, basename='request')
 router.register(r'plans', MaintenancePlanViewSet, basename='plan')
+router.register(r'procedure-categories', ProcedureCategoryViewSet, basename='procedure-category')
+router.register(r'procedures', ProcedureViewSet, basename='procedure')
 
 
 urlpatterns = [

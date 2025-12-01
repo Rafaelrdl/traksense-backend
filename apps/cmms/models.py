@@ -673,3 +673,229 @@ class MaintenancePlan(models.Model):
         ])
         
         return [wo.id for wo in work_orders]
+
+
+# ============================================
+# Procedures - Documentação Técnica
+# ============================================
+
+class ProcedureCategory(models.Model):
+    """
+    Categoria de Procedimentos.
+    
+    Agrupa procedimentos por área ou tipo (ex: Elétrico, Mecânico, Segurança).
+    """
+    name = models.CharField(
+        max_length=100,
+        verbose_name='Nome',
+        help_text='Nome da categoria'
+    )
+    description = models.TextField(
+        blank=True,
+        verbose_name='Descrição',
+        help_text='Descrição da categoria'
+    )
+    color = models.CharField(
+        max_length=20,
+        blank=True,
+        default='#3b82f6',
+        verbose_name='Cor',
+        help_text='Cor para identificação visual (hex)'
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name='Ativo'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Criado em')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Atualizado em')
+
+    class Meta:
+        verbose_name = 'Categoria de Procedimento'
+        verbose_name_plural = 'Categorias de Procedimentos'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def procedure_count(self):
+        return self.procedures.filter(is_active=True).count()
+
+
+class Procedure(models.Model):
+    """
+    Procedimento Técnico.
+    
+    Documento que descreve como executar uma tarefa ou manutenção.
+    Pode ser um PDF, arquivo Markdown ou documento DOCX.
+    """
+    
+    class Status(models.TextChoices):
+        ACTIVE = 'ACTIVE', 'Ativo'
+        INACTIVE = 'INACTIVE', 'Inativo'
+        DRAFT = 'DRAFT', 'Rascunho'
+        ARCHIVED = 'ARCHIVED', 'Arquivado'
+
+    class FileType(models.TextChoices):
+        PDF = 'PDF', 'PDF'
+        MARKDOWN = 'MARKDOWN', 'Markdown'
+        DOCX = 'DOCX', 'Word'
+
+    title = models.CharField(
+        max_length=200,
+        verbose_name='Título',
+        help_text='Título do procedimento'
+    )
+    description = models.TextField(
+        blank=True,
+        verbose_name='Descrição',
+        help_text='Descrição detalhada do procedimento'
+    )
+    category = models.ForeignKey(
+        ProcedureCategory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='procedures',
+        verbose_name='Categoria'
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+        verbose_name='Status'
+    )
+    file = models.FileField(
+        upload_to='procedures/%Y/%m/',
+        verbose_name='Arquivo',
+        help_text='Arquivo do procedimento (PDF, MD ou DOCX)'
+    )
+    file_type = models.CharField(
+        max_length=20,
+        choices=FileType.choices,
+        default=FileType.PDF,
+        verbose_name='Tipo de Arquivo'
+    )
+    version = models.PositiveIntegerField(
+        default=1,
+        verbose_name='Versão',
+        help_text='Número da versão atual'
+    )
+    tags = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='Tags',
+        help_text='Tags para busca e categorização'
+    )
+    view_count = models.PositiveIntegerField(
+        default=0,
+        verbose_name='Visualizações'
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name='Ativo'
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='created_procedures',
+        verbose_name='Criado por'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Criado em')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Atualizado em')
+
+    class Meta:
+        verbose_name = 'Procedimento'
+        verbose_name_plural = 'Procedimentos'
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f"{self.title} (v{self.version})"
+
+    def increment_view_count(self):
+        """Incrementa o contador de visualizações."""
+        self.view_count += 1
+        self.save(update_fields=['view_count'])
+
+    def create_new_version(self, file, changelog: str = '', user=None):
+        """
+        Cria uma nova versão do procedimento.
+        
+        Args:
+            file: Novo arquivo do procedimento
+            changelog: Descrição das mudanças
+            user: Usuário que está criando a versão
+        """
+        # Salvar versão anterior no histórico
+        ProcedureVersion.objects.create(
+            procedure=self,
+            version_number=self.version,
+            file=self.file,
+            file_type=self.file_type,
+            changelog=changelog or f'Versão {self.version}',
+            created_by=user
+        )
+        
+        # Atualizar procedimento com nova versão
+        self.version += 1
+        self.file = file
+        
+        # Detectar tipo de arquivo
+        if file.name.lower().endswith('.pdf'):
+            self.file_type = self.FileType.PDF
+        elif file.name.lower().endswith('.md'):
+            self.file_type = self.FileType.MARKDOWN
+        elif file.name.lower().endswith('.docx'):
+            self.file_type = self.FileType.DOCX
+            
+        self.save()
+
+
+class ProcedureVersion(models.Model):
+    """
+    Histórico de versões de um procedimento.
+    
+    Mantém registro de todas as versões anteriores do procedimento.
+    """
+    procedure = models.ForeignKey(
+        Procedure,
+        on_delete=models.CASCADE,
+        related_name='versions',
+        verbose_name='Procedimento'
+    )
+    version_number = models.PositiveIntegerField(
+        verbose_name='Número da Versão'
+    )
+    file = models.FileField(
+        upload_to='procedures/versions/%Y/%m/',
+        verbose_name='Arquivo'
+    )
+    file_type = models.CharField(
+        max_length=20,
+        choices=Procedure.FileType.choices,
+        default=Procedure.FileType.PDF,
+        verbose_name='Tipo de Arquivo'
+    )
+    changelog = models.TextField(
+        blank=True,
+        verbose_name='Changelog',
+        help_text='Descrição das mudanças nesta versão'
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='procedure_versions',
+        verbose_name='Criado por'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Criado em')
+
+    class Meta:
+        verbose_name = 'Versão de Procedimento'
+        verbose_name_plural = 'Versões de Procedimentos'
+        ordering = ['-version_number']
+        unique_together = ['procedure', 'version_number']
+
+    def __str__(self):
+        return f"{self.procedure.title} - v{self.version_number}"

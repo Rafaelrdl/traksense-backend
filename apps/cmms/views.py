@@ -13,7 +13,8 @@ from django.utils import timezone
 
 from .models import (
     ChecklistTemplate, WorkOrder, WorkOrderPhoto, 
-    WorkOrderItem, Request, RequestItem, MaintenancePlan
+    WorkOrderItem, Request, RequestItem, MaintenancePlan,
+    ProcedureCategory, Procedure, ProcedureVersion
 )
 from .serializers import (
     ChecklistTemplateSerializer,
@@ -21,7 +22,11 @@ from .serializers import (
     WorkOrderItemSerializer, WorkOrderStatsSerializer,
     RequestSerializer, RequestListSerializer, RequestItemSerializer,
     ConvertToWorkOrderSerializer,
-    MaintenancePlanSerializer, MaintenancePlanListSerializer
+    MaintenancePlanSerializer, MaintenancePlanListSerializer,
+    ProcedureCategorySerializer, ProcedureListSerializer,
+    ProcedureDetailSerializer, ProcedureCreateSerializer,
+    ProcedureUpdateSerializer, ProcedureVersionSerializer,
+    ProcedureApproveSerializer
 )
 from apps.inventory.models import InventoryMovement
 
@@ -474,3 +479,220 @@ class MaintenancePlanViewSet(viewsets.ModelViewSet):
                 for item in next_executions
             ]
         })
+
+
+# ========================
+# ViewSets de Procedimentos
+# ========================
+
+class ProcedureCategoryViewSet(viewsets.ModelViewSet):
+    """ViewSet para categorias de procedimentos."""
+    
+    queryset = ProcedureCategory.objects.all()
+    serializer_class = ProcedureCategorySerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['name', 'description']
+    ordering_fields = ['name', 'created_at']
+    ordering = ['name']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        # Adiciona contagem de procedures
+        queryset = queryset.annotate(
+            procedures_count=Count('procedures')
+        )
+        return queryset
+
+
+class ProcedureViewSet(viewsets.ModelViewSet):
+    """ViewSet para procedimentos."""
+    
+    queryset = Procedure.objects.all()
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['category', 'status', 'file_type']
+    search_fields = ['title', 'code', 'description']
+    ordering_fields = ['title', 'code', 'created_at', 'updated_at']
+    ordering = ['-updated_at']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        queryset = queryset.select_related(
+            'category', 'created_by'
+        ).annotate(
+            versions_count=Count('versions')
+        )
+        return queryset
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return ProcedureListSerializer
+        elif self.action == 'retrieve':
+            return ProcedureDetailSerializer
+        elif self.action == 'create':
+            return ProcedureCreateSerializer
+        elif self.action in ['update', 'partial_update']:
+            return ProcedureUpdateSerializer
+        return ProcedureDetailSerializer
+
+    def perform_create(self, serializer):
+        procedure = serializer.save(created_by=self.request.user)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """Aprova um procedimento (muda para ACTIVE)."""
+        procedure = self.get_object()
+        serializer = ProcedureApproveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        if serializer.validated_data['approved']:
+            procedure.status = 'ACTIVE'
+            procedure.is_active = True
+            procedure.save()
+            return Response({
+                'status': 'approved',
+                'message': 'Procedimento aprovado com sucesso.'
+            })
+        else:
+            procedure.status = 'INACTIVE'
+            procedure.is_active = False
+            procedure.save()
+            return Response({
+                'status': 'rejected',
+                'message': 'Procedimento desativado.',
+                'reason': serializer.validated_data.get('rejection_reason', '')
+            })
+
+    @action(detail=True, methods=['post'])
+    def submit_for_review(self, request, pk=None):
+        """Envia procedimento para revisão."""
+        procedure = self.get_object()
+        
+        if procedure.status not in ['DRAFT', 'ARCHIVED']:
+            return Response(
+                {'error': 'Apenas procedimentos em rascunho ou arquivados podem ser enviados para revisão.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        procedure.status = 'REVIEW'
+        procedure.save()
+        
+        return Response({
+            'status': 'submitted',
+            'message': 'Procedimento enviado para revisão.'
+        })
+
+    @action(detail=True, methods=['post'])
+    def archive(self, request, pk=None):
+        """Arquiva um procedimento."""
+        procedure = self.get_object()
+        procedure.status = 'ARCHIVED'
+        procedure.save()
+        
+        return Response({
+            'status': 'archived',
+            'message': 'Procedimento arquivado com sucesso.'
+        })
+
+    @action(detail=True, methods=['post'])
+    def create_version(self, request, pk=None):
+        """Cria uma nova versão do procedimento."""
+        procedure = self.get_object()
+        
+        # Dados da nova versão
+        changelog = request.data.get('changelog', 'Nova versão')
+        file = request.FILES.get('file')
+        
+        # Salva versão anterior
+        ProcedureVersion.objects.create(
+            procedure=procedure,
+            version_number=procedure.version,
+            file=procedure.file,
+            file_type=procedure.file_type,
+            changelog=changelog,
+            created_by=request.user
+        )
+        
+        # Atualiza procedimento com novo arquivo se fornecido
+        if file:
+            procedure.file = file
+            # Detecta tipo de arquivo
+            if file.name.lower().endswith('.pdf'):
+                procedure.file_type = 'PDF'
+            elif file.name.lower().endswith('.md'):
+                procedure.file_type = 'MARKDOWN'
+            elif file.name.lower().endswith('.docx'):
+                procedure.file_type = 'DOCX'
+        
+        # Incrementa versão
+        procedure.version += 1
+        procedure.save()
+        
+        return Response({
+            'status': 'created',
+            'version': procedure.version,
+            'message': f'Versão {procedure.version} criada com sucesso.'
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get'])
+    def versions(self, request, pk=None):
+        """Lista todas as versões do procedimento."""
+        procedure = self.get_object()
+        versions = procedure.versions.all().order_by('-version_number')
+        serializer = ProcedureVersionSerializer(versions, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], url_path='versions/(?P<version_id>[^/.]+)/restore')
+    def restore_version(self, request, pk=None, version_id=None):
+        """Restaura uma versão anterior do procedimento."""
+        procedure = self.get_object()
+        
+        try:
+            version = procedure.versions.get(id=version_id)
+        except ProcedureVersion.DoesNotExist:
+            return Response(
+                {'error': 'Versão não encontrada.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Atualiza procedimento com dados da versão
+        procedure.file = version.file
+        procedure.file_type = version.file_type
+        procedure.save()
+        
+        return Response({
+            'status': 'restored',
+            'message': f'Procedimento restaurado para versão {version.version_number}.'
+        })
+
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        """Retorna estatísticas dos procedimentos."""
+        queryset = self.get_queryset()
+        
+        total = queryset.count()
+        by_status = {
+            'active': queryset.filter(status='ACTIVE').count(),
+            'inactive': queryset.filter(status='INACTIVE').count(),
+            'draft': queryset.filter(status='DRAFT').count(),
+            'archived': queryset.filter(status='ARCHIVED').count(),
+        }
+        by_type = {
+            'pdf': queryset.filter(file_type='PDF').count(),
+            'markdown': queryset.filter(file_type='MARKDOWN').count(),
+            'docx': queryset.filter(file_type='DOCX').count(),
+        }
+        
+        # Por categoria
+        category_counts = queryset.values('category__name').annotate(count=Count('id'))
+        by_category = {item['category__name']: item['count'] for item in category_counts if item['category__name']}
+        
+        return Response({
+            'total': total,
+            'by_status': by_status,
+            'by_type': by_type,
+            'by_category': by_category
+        })
+

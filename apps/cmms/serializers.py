@@ -6,7 +6,8 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import (
     ChecklistTemplate, WorkOrder, WorkOrderPhoto, 
-    WorkOrderItem, Request, RequestItem, MaintenancePlan
+    WorkOrderItem, Request, RequestItem, MaintenancePlan,
+    ProcedureCategory, Procedure, ProcedureVersion
 )
 
 User = get_user_model()
@@ -303,3 +304,158 @@ class WorkOrderStatsSerializer(serializers.Serializer):
     overdue = serializers.IntegerField()
     by_type = serializers.DictField()
     by_priority = serializers.DictField()
+
+
+# ========================
+# Serializers de Procedimentos
+# ========================
+
+class ProcedureCategorySerializer(serializers.ModelSerializer):
+    """Serializer para ProcedureCategory."""
+    
+    procedures_count = serializers.IntegerField(read_only=True)
+    
+    class Meta:
+        model = ProcedureCategory
+        fields = [
+            'id', 'name', 'description', 'color', 
+            'procedures_count', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class ProcedureVersionSerializer(serializers.ModelSerializer):
+    """Serializer para ProcedureVersion."""
+    
+    created_by_name = serializers.CharField(
+        source='created_by.get_full_name',
+        read_only=True,
+        allow_null=True
+    )
+    
+    class Meta:
+        model = ProcedureVersion
+        fields = [
+            'id', 'version_number', 'changelog',
+            'file', 'file_type', 'created_by', 'created_by_name', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_by', 'created_by_name', 'created_at']
+
+
+class ProcedureListSerializer(serializers.ModelSerializer):
+    """Serializer simplificado para listagem de Procedures."""
+    
+    category_name = serializers.CharField(source='category.name', read_only=True, allow_null=True)
+    category_color = serializers.CharField(source='category.color', read_only=True, allow_null=True)
+    created_by_name = serializers.CharField(
+        source='created_by.get_full_name',
+        read_only=True,
+        allow_null=True
+    )
+    versions_count = serializers.IntegerField(read_only=True)
+    
+    class Meta:
+        model = Procedure
+        fields = [
+            'id', 'title', 'category', 'category_name', 'category_color',
+            'status', 'file_type', 'file', 'version', 'versions_count',
+            'is_active', 'view_count', 'tags',
+            'created_by', 'created_by_name', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_by', 'created_by_name', 'created_at', 'updated_at']
+
+
+class ProcedureDetailSerializer(serializers.ModelSerializer):
+    """Serializer detalhado para Procedure com todas as versões."""
+    
+    category_name = serializers.CharField(source='category.name', read_only=True, allow_null=True)
+    category_color = serializers.CharField(source='category.color', read_only=True, allow_null=True)
+    created_by_name = serializers.CharField(
+        source='created_by.get_full_name',
+        read_only=True,
+        allow_null=True
+    )
+    versions = ProcedureVersionSerializer(many=True, read_only=True)
+    
+    class Meta:
+        model = Procedure
+        fields = [
+            'id', 'title', 'description', 'category', 'category_name', 
+            'category_color', 'status', 'file_type', 'file',
+            'version', 'versions', 'tags', 'view_count', 'is_active',
+            'created_by', 'created_by_name', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_by', 'created_by_name', 'created_at', 'updated_at']
+
+
+class ProcedureCreateSerializer(serializers.ModelSerializer):
+    """Serializer para criação de Procedure."""
+    
+    class Meta:
+        model = Procedure
+        fields = [
+            'title', 'description', 'category', 'status', 
+            'file_type', 'file', 'tags'
+        ]
+    
+    def validate(self, data):
+        file = data.get('file')
+        
+        if not file:
+            raise serializers.ValidationError({
+                'file': 'Arquivo é obrigatório.'
+            })
+        
+        return data
+
+
+class ProcedureUpdateSerializer(serializers.ModelSerializer):
+    """Serializer para atualização de Procedure."""
+    
+    create_version = serializers.BooleanField(default=False, write_only=True)
+    version_changes = serializers.CharField(required=False, write_only=True, allow_blank=True)
+    
+    class Meta:
+        model = Procedure
+        fields = [
+            'title', 'description', 'category', 'status',
+            'file_type', 'file', 'tags', 'is_active',
+            'create_version', 'version_changes'
+        ]
+    
+    def update(self, instance, validated_data):
+        create_version = validated_data.pop('create_version', False)
+        version_changes = validated_data.pop('version_changes', '')
+        
+        # Se vai criar versão, salvar arquivo atual
+        old_file = instance.file
+        old_file_type = instance.file_type
+        
+        # Atualiza a procedure
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        
+        # Cria nova versão se solicitado
+        if create_version and old_file:
+            ProcedureVersion.objects.create(
+                procedure=instance,
+                version_number=instance.version,
+                file=old_file,
+                file_type=old_file_type,
+                changelog=version_changes or 'Atualização do procedimento',
+                created_by=self.context['request'].user
+            )
+            # Incrementa versão do procedimento
+            instance.version += 1
+            instance.save(update_fields=['version'])
+        
+        return instance
+
+
+class ProcedureApproveSerializer(serializers.Serializer):
+    """Serializer para aprovação de Procedure."""
+    
+    approved = serializers.BooleanField()
+    rejection_reason = serializers.CharField(required=False, allow_blank=True)
+
