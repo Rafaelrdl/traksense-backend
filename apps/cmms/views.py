@@ -12,12 +12,14 @@ from django.db.models import Count, Q
 from django.utils import timezone
 
 from .models import (
-    ChecklistTemplate, WorkOrder, WorkOrderPhoto, 
+    ChecklistCategory, ChecklistTemplate, WorkOrder, WorkOrderPhoto, 
     WorkOrderItem, Request, RequestItem, MaintenancePlan,
     ProcedureCategory, Procedure, ProcedureVersion
 )
 from .serializers import (
-    ChecklistTemplateSerializer,
+    ChecklistCategorySerializer, ChecklistTemplateSerializer,
+    ChecklistTemplateListSerializer, ChecklistTemplateDetailSerializer,
+    ChecklistTemplateCreateSerializer, ChecklistTemplateUpdateSerializer,
     WorkOrderSerializer, WorkOrderListSerializer, WorkOrderPhotoSerializer,
     WorkOrderItemSerializer, WorkOrderStatsSerializer,
     RequestSerializer, RequestListSerializer, RequestItemSerializer,
@@ -31,11 +33,11 @@ from .serializers import (
 from apps.inventory.models import InventoryMovement
 
 
-class ChecklistTemplateViewSet(viewsets.ModelViewSet):
-    """ViewSet para templates de checklist."""
+class ChecklistCategoryViewSet(viewsets.ModelViewSet):
+    """ViewSet para categorias de checklist."""
     
-    queryset = ChecklistTemplate.objects.all()
-    serializer_class = ChecklistTemplateSerializer
+    queryset = ChecklistCategory.objects.all()
+    serializer_class = ChecklistCategorySerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'description']
@@ -46,10 +48,108 @@ class ChecklistTemplateViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         # Filtrar apenas ativos por padrão
         if self.action == 'list':
-            is_active = self.request.query_params.get('is_active', 'true')
-            if is_active.lower() == 'true':
-                queryset = queryset.filter(is_active=True)
+            is_active = self.request.query_params.get('is_active', None)
+            if is_active is not None:
+                queryset = queryset.filter(is_active=is_active.lower() == 'true')
         return queryset
+
+
+class ChecklistTemplateViewSet(viewsets.ModelViewSet):
+    """ViewSet para templates de checklist."""
+    
+    queryset = ChecklistTemplate.objects.select_related('category', 'created_by')
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = {
+        'category': ['exact'],
+        'status': ['exact', 'in'],
+        'is_active': ['exact'],
+    }
+    search_fields = ['name', 'description']
+    ordering_fields = ['name', 'created_at', 'usage_count']
+    ordering = ['name']
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return ChecklistTemplateListSerializer
+        if self.action == 'retrieve':
+            return ChecklistTemplateDetailSerializer
+        if self.action == 'create':
+            return ChecklistTemplateCreateSerializer
+        if self.action in ['update', 'partial_update']:
+            return ChecklistTemplateUpdateSerializer
+        return ChecklistTemplateSerializer
+
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        """Retorna estatísticas dos checklists."""
+        queryset = self.get_queryset()
+        
+        total = queryset.count()
+        active = queryset.filter(is_active=True, status='ACTIVE').count()
+        inactive = queryset.filter(Q(is_active=False) | ~Q(status='ACTIVE')).count()
+        
+        # Calcular total de itens e uso
+        total_items = 0
+        total_usage = 0
+        for checklist in queryset:
+            if checklist.items:
+                total_items += len(checklist.items)
+            total_usage += checklist.usage_count
+        
+        # Por categoria
+        by_category = {}
+        for cat in ChecklistCategory.objects.all():
+            by_category[cat.name] = queryset.filter(category=cat).count()
+        
+        return Response({
+            'total': total,
+            'active': active,
+            'inactive': inactive,
+            'total_items': total_items,
+            'total_usage': total_usage,
+            'by_category': by_category,
+        })
+
+    @action(detail=True, methods=['post'])
+    def duplicate(self, request, pk=None):
+        """Duplica um checklist."""
+        original = self.get_object()
+        
+        # Criar cópia
+        new_checklist = ChecklistTemplate.objects.create(
+            name=f"{original.name} (Cópia)",
+            description=original.description,
+            category=original.category,
+            items=original.items.copy() if original.items else [],
+            status='DRAFT',
+            is_active=True,
+            estimated_time=original.estimated_time,
+            created_by=request.user,
+        )
+        
+        serializer = ChecklistTemplateDetailSerializer(new_checklist)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def toggle_active(self, request, pk=None):
+        """Ativa ou desativa um checklist."""
+        checklist = self.get_object()
+        is_active = request.data.get('is_active', not checklist.is_active)
+        
+        checklist.is_active = is_active
+        checklist.save(update_fields=['is_active', 'updated_at'])
+        
+        serializer = ChecklistTemplateDetailSerializer(checklist)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def increment_usage(self, request, pk=None):
+        """Incrementa o contador de uso."""
+        checklist = self.get_object()
+        checklist.increment_usage()
+        
+        return Response({'usage_count': checklist.usage_count})
 
 
 class WorkOrderViewSet(viewsets.ModelViewSet):

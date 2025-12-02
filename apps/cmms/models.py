@@ -20,6 +20,57 @@ import uuid
 User = get_user_model()
 
 
+class ChecklistCategory(models.Model):
+    """
+    Categoria de Checklists.
+    
+    Agrupa checklists por área ou tipo de equipamento.
+    Exemplos: HVAC, Elétrico, Predial, Segurança.
+    """
+    name = models.CharField(
+        max_length=100,
+        verbose_name='Nome',
+        help_text='Nome da categoria'
+    )
+    description = models.TextField(
+        blank=True,
+        verbose_name='Descrição',
+        help_text='Descrição da categoria'
+    )
+    color = models.CharField(
+        max_length=20,
+        blank=True,
+        default='#3b82f6',
+        verbose_name='Cor',
+        help_text='Cor para identificação visual (hex)'
+    )
+    icon = models.CharField(
+        max_length=50,
+        blank=True,
+        default='clipboard-list',
+        verbose_name='Ícone',
+        help_text='Nome do ícone Lucide'
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name='Ativo'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Criado em')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Atualizado em')
+
+    class Meta:
+        verbose_name = 'Categoria de Checklist'
+        verbose_name_plural = 'Categorias de Checklists'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def checklist_count(self):
+        return self.checklist_templates.filter(is_active=True).count()
+
+
 class ChecklistTemplate(models.Model):
     """
     Template de checklist reutilizável para ordens de serviço.
@@ -28,13 +79,20 @@ class ChecklistTemplate(models.Model):
     [
         {
             "id": "uuid",
-            "question": "Verificar pressão do compressor",
-            "type": "BOOLEAN",  # TEXT, NUMBER, BOOLEAN, MULTIPLE_CHOICE
+            "label": "Verificar pressão do compressor",
+            "type": "checkbox",  # checkbox, text, number, select, photo
             "required": true,
-            "options": ["Opção 1", "Opção 2"]  # Apenas para MULTIPLE_CHOICE
+            "order": 1,
+            "options": ["Opção 1", "Opção 2"]  # Apenas para select
         }
     ]
     """
+    
+    class Status(models.TextChoices):
+        ACTIVE = 'ACTIVE', 'Ativo'
+        INACTIVE = 'INACTIVE', 'Inativo'
+        DRAFT = 'DRAFT', 'Rascunho'
+
     name = models.CharField(
         max_length=200,
         verbose_name='Nome',
@@ -45,15 +103,53 @@ class ChecklistTemplate(models.Model):
         verbose_name='Descrição',
         help_text='Descrição detalhada do checklist'
     )
+    category = models.ForeignKey(
+        ChecklistCategory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='checklist_templates',
+        verbose_name='Categoria'
+    )
     items = models.JSONField(
         default=list,
         verbose_name='Itens',
         help_text='Lista de itens do checklist em formato JSON'
     )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+        verbose_name='Status'
+    )
     is_active = models.BooleanField(
         default=True,
         verbose_name='Ativo',
         help_text='Se o template está disponível para uso'
+    )
+    version = models.PositiveIntegerField(
+        default=1,
+        verbose_name='Versão',
+        help_text='Versão do template'
+    )
+    usage_count = models.PositiveIntegerField(
+        default=0,
+        verbose_name='Contador de Uso',
+        help_text='Quantas vezes este checklist foi utilizado'
+    )
+    estimated_time = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name='Tempo Estimado (min)',
+        help_text='Tempo estimado para completar o checklist'
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_checklists',
+        verbose_name='Criado por'
     )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Criado em')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Atualizado em')
@@ -65,6 +161,16 @@ class ChecklistTemplate(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def items_count(self):
+        """Retorna o número de itens no checklist."""
+        return len(self.items) if self.items else 0
+
+    def increment_usage(self):
+        """Incrementa o contador de uso."""
+        self.usage_count += 1
+        self.save(update_fields=['usage_count'])
 
 
 class WorkOrder(models.Model):

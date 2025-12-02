@@ -5,7 +5,7 @@ Serializers para CMMS - Gestão de Manutenção
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import (
-    ChecklistTemplate, WorkOrder, WorkOrderPhoto, 
+    ChecklistCategory, ChecklistTemplate, WorkOrder, WorkOrderPhoto, 
     WorkOrderItem, Request, RequestItem, MaintenancePlan,
     ProcedureCategory, Procedure, ProcedureVersion
 )
@@ -13,8 +13,99 @@ from .models import (
 User = get_user_model()
 
 
+# ============================================
+# CHECKLIST SERIALIZERS
+# ============================================
+
+class ChecklistCategorySerializer(serializers.ModelSerializer):
+    """Serializer para ChecklistCategory."""
+    
+    checklist_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ChecklistCategory
+        fields = [
+            'id', 'name', 'description', 'color', 'icon',
+            'is_active', 'checklist_count', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'checklist_count', 'created_at', 'updated_at']
+
+    def get_checklist_count(self, obj):
+        return obj.checklist_templates.filter(is_active=True).count()
+
+
+class ChecklistTemplateListSerializer(serializers.ModelSerializer):
+    """Serializer para listagem de ChecklistTemplate."""
+    
+    category_name = serializers.CharField(source='category.name', read_only=True, allow_null=True)
+    category_color = serializers.CharField(source='category.color', read_only=True, allow_null=True)
+    items_count = serializers.SerializerMethodField()
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True, allow_null=True)
+    
+    class Meta:
+        model = ChecklistTemplate
+        fields = [
+            'id', 'name', 'description', 'category', 'category_name', 'category_color',
+            'status', 'is_active', 'version', 'usage_count', 'estimated_time',
+            'items_count', 'created_by', 'created_by_name', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'items_count', 'usage_count', 'created_by', 'created_by_name', 'created_at', 'updated_at']
+
+    def get_items_count(self, obj):
+        return len(obj.items) if obj.items else 0
+
+
+class ChecklistTemplateDetailSerializer(serializers.ModelSerializer):
+    """Serializer detalhado para ChecklistTemplate."""
+    
+    category_name = serializers.CharField(source='category.name', read_only=True, allow_null=True)
+    category_color = serializers.CharField(source='category.color', read_only=True, allow_null=True)
+    items_count = serializers.SerializerMethodField()
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True, allow_null=True)
+    
+    class Meta:
+        model = ChecklistTemplate
+        fields = [
+            'id', 'name', 'description', 'category', 'category_name', 'category_color',
+            'items', 'status', 'is_active', 'version', 'usage_count', 'estimated_time',
+            'items_count', 'created_by', 'created_by_name', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'items_count', 'usage_count', 'created_by', 'created_by_name', 'created_at', 'updated_at']
+
+    def get_items_count(self, obj):
+        return len(obj.items) if obj.items else 0
+
+
+class ChecklistTemplateCreateSerializer(serializers.ModelSerializer):
+    """Serializer para criação de ChecklistTemplate."""
+    
+    class Meta:
+        model = ChecklistTemplate
+        fields = [
+            'name', 'description', 'category', 'items', 
+            'status', 'is_active', 'estimated_time'
+        ]
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            validated_data['created_by'] = request.user
+        return super().create(validated_data)
+
+
+class ChecklistTemplateUpdateSerializer(serializers.ModelSerializer):
+    """Serializer para atualização de ChecklistTemplate."""
+    
+    class Meta:
+        model = ChecklistTemplate
+        fields = [
+            'name', 'description', 'category', 'items', 
+            'status', 'is_active', 'estimated_time'
+        ]
+
+
 class ChecklistTemplateSerializer(serializers.ModelSerializer):
-    """Serializer para ChecklistTemplate."""
+    """Serializer legado para ChecklistTemplate (compatibilidade)."""
     
     class Meta:
         model = ChecklistTemplate
@@ -23,6 +114,11 @@ class ChecklistTemplateSerializer(serializers.ModelSerializer):
             'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+# ============================================
+# WORK ORDER SERIALIZERS
+# ============================================
 
 
 class WorkOrderPhotoSerializer(serializers.ModelSerializer):
