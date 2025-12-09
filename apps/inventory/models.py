@@ -300,6 +300,10 @@ class InventoryMovement(models.Model):
         if not self.pk:
             self.quantity_before = self.item.quantity
             
+            # Se unit_cost não foi informado, usar o custo do item
+            if self.unit_cost is None:
+                self.unit_cost = self.item.unit_cost
+            
             # Calcular quantidade depois
             if self.type == self.MovementType.IN or self.type == self.MovementType.RETURN:
                 self.quantity_after = self.quantity_before + self.quantity
