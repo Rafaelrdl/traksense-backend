@@ -233,12 +233,12 @@ class PasswordResetValidateView(APIView):
     Validate password reset token.
     
     GET /api/auth/password-reset/validate/?token=xxx
+    POST /api/auth/password-reset/validate/ {"token": "xxx"}
     """
     permission_classes = [AllowAny]
     
-    def get(self, request):
-        token = request.query_params.get('token', '')
-        
+    def _validate_token(self, token):
+        """Internal method to validate token."""
         if not token:
             return Response({
                 'valid': False,
@@ -270,6 +270,14 @@ class PasswordResetValidateView(APIView):
                 'valid': False,
                 'error': 'Token inválido.'
             }, status=status.HTTP_400_BAD_REQUEST)
+    
+    def get(self, request):
+        token = request.query_params.get('token', '')
+        return self._validate_token(token)
+    
+    def post(self, request):
+        token = request.data.get('token', '')
+        return self._validate_token(token)
 
 
 class PasswordResetConfirmView(APIView):
