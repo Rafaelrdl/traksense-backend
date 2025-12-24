@@ -78,64 +78,136 @@ class PasswordResetRequestView(APIView):
             
             html_message = f"""
             <!DOCTYPE html>
-            <html>
+            <html lang="pt-BR">
             <head>
-                <meta charset="utf-8">
-                <style>
-                    body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                    .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                    .header {{ text-align: center; padding: 20px 0; }}
-                    .logo {{ font-size: 24px; font-weight: bold; color: #0d9488; }}
-                    .content {{ background: #f9fafb; border-radius: 8px; padding: 30px; margin: 20px 0; }}
-                    .button {{ display: inline-block; background: #0d9488; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: 600; }}
-                    .button:hover {{ background: #0f766e; }}
-                    .footer {{ text-align: center; color: #6b7280; font-size: 12px; margin-top: 30px; }}
-                    .warning {{ color: #dc2626; font-size: 14px; margin-top: 20px; }}
-                </style>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Redefinição de Senha - Climatrak</title>
             </head>
-            <body>
-                <div class="container">
-                    <div class="header">
-                        <div class="logo">CLIMATRAK</div>
-                    </div>
-                    <div class="content">
-                        <h2>Redefinição de Senha</h2>
-                        <p>Olá, {user.first_name or user.username}!</p>
-                        <p>Recebemos uma solicitação para redefinir a senha da sua conta.</p>
-                        <p>Clique no botão abaixo para criar uma nova senha:</p>
-                        <p style="text-align: center; margin: 30px 0;">
-                            <a href="{reset_url}" class="button">Redefinir Senha</a>
-                        </p>
-                        <p class="warning">
-                            ⚠️ Este link expira em 1 hora.<br>
-                            Se você não solicitou esta redefinição, ignore este e-mail.
-                        </p>
-                    </div>
-                    <div class="footer">
-                        <p>Este é um e-mail automático, por favor não responda.</p>
-                        <p>© {timezone.now().year} Climatrak. Todos os direitos reservados.</p>
-                    </div>
-                </div>
+            <body style="margin: 0; padding: 0; background-color: #f5f5f5; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+                
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f5f5f5;">
+                    <tr>
+                        <td style="padding: 40px 20px;">
+                            
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="max-width: 600px; margin: 0 auto;">
+                                
+                                <!-- Header -->
+                                <tr>
+                                    <td style="text-align: center; padding-bottom: 32px;">
+                                        <span style="font-size: 28px; font-weight: 600; color: #0d9488; letter-spacing: 2px;">CLIMATRAK</span>
+                                    </td>
+                                </tr>
+                                
+                                <!-- Main Card -->
+                                <tr>
+                                    <td>
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #ffffff; border-radius: 4px; border: 1px solid #e0e0e0;">
+                                            
+                                            <!-- Title -->
+                                            <tr>
+                                                <td style="padding: 40px 40px 24px 40px; border-bottom: 1px solid #eeeeee;">
+                                                    <h1 style="margin: 0; font-size: 22px; font-weight: 600; color: #1a1a1a;">Redefinição de Senha</h1>
+                                                </td>
+                                            </tr>
+                                            
+                                            <!-- Content -->
+                                            <tr>
+                                                <td style="padding: 32px 40px;">
+                                                    <p style="margin: 0 0 20px 0; font-size: 15px; color: #333333; line-height: 1.6;">
+                                                        Olá, <strong>{user.first_name or user.username}</strong>.
+                                                    </p>
+                                                    <p style="margin: 0 0 28px 0; font-size: 15px; color: #333333; line-height: 1.6;">
+                                                        Recebemos uma solicitação para redefinir a senha da sua conta na plataforma Climatrak. 
+                                                        Para prosseguir, clique no botão abaixo.
+                                                    </p>
+                                                    
+                                                    <!-- CTA Button -->
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto 28px auto;">
+                                                        <tr>
+                                                            <td style="background-color: #0d9488; border-radius: 4px;">
+                                                                <a href="{reset_url}" target="_blank" style="display: inline-block; padding: 14px 40px; font-size: 15px; font-weight: 500; color: #ffffff; text-decoration: none;">
+                                                                    Redefinir Senha
+                                                                </a>
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                    
+                                                    <!-- Warning -->
+                                                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #fff8e6; border: 1px solid #f0e6cc; margin-bottom: 24px;">
+                                                        <tr>
+                                                            <td style="padding: 16px;">
+                                                                <p style="margin: 0 0 6px 0; font-size: 14px; font-weight: 500; color: #8a6d3b;">
+                                                                    Atenção
+                                                                </p>
+                                                                <p style="margin: 0; font-size: 13px; color: #8a6d3b; line-height: 1.5;">
+                                                                    Este link é válido por 1 hora. Após esse período, será necessário solicitar uma nova redefinição.
+                                                                </p>
+                                                            </td>
+                                                        </tr>
+                                                    </table>
+                                                    
+                                                    <p style="margin: 0 0 20px 0; font-size: 14px; color: #666666; line-height: 1.6;">
+                                                        Se você não solicitou esta redefinição, desconsidere este e-mail. Sua senha atual permanecerá inalterada.
+                                                    </p>
+                                                    
+                                                    <!-- Alternative Link -->
+                                                    <p style="margin: 0; font-size: 13px; color: #888888;">
+                                                        Caso o botão não funcione, copie e cole o link abaixo no navegador:
+                                                    </p>
+                                                    <p style="margin: 8px 0 0 0; font-size: 12px; color: #0d9488; word-break: break-all;">
+                                                        {reset_url}
+                                                    </p>
+                                                </td>
+                                            </tr>
+                                            
+                                        </table>
+                                    </td>
+                                </tr>
+                                
+                                <!-- Footer -->
+                                <tr>
+                                    <td style="padding-top: 32px; text-align: center;">
+                                        <p style="margin: 0 0 8px 0; font-size: 13px; color: #888888;">
+                                            Este é um e-mail automático. Por favor, não responda.
+                                        </p>
+                                        <p style="margin: 0; font-size: 12px; color: #aaaaaa;">
+                                            © {timezone.now().year} Climatrak. Todos os direitos reservados.
+                                        </p>
+                                    </td>
+                                </tr>
+                                
+                            </table>
+                            
+                        </td>
+                    </tr>
+                </table>
+                
             </body>
             </html>
             """
             
             plain_message = f"""
-            Redefinição de Senha - Climatrak
-            
-            Olá, {user.first_name or user.username}!
-            
-            Recebemos uma solicitação para redefinir a senha da sua conta.
-            
-            Acesse o link abaixo para criar uma nova senha:
-            {reset_url}
-            
-            ⚠️ Este link expira em 1 hora.
-            Se você não solicitou esta redefinição, ignore este e-mail.
-            
-            ---
-            Este é um e-mail automático, por favor não responda.
-            © {timezone.now().year} Climatrak. Todos os direitos reservados.
+CLIMATRAK
+Redefinição de Senha
+
+--------------------------------------------------
+
+Olá, {user.first_name or user.username}.
+
+Recebemos uma solicitação para redefinir a senha da sua conta na plataforma Climatrak.
+
+Para prosseguir, acesse o link abaixo:
+{reset_url}
+
+ATENÇÃO: Este link é válido por 1 hora.
+
+Se você não solicitou esta redefinição, desconsidere este e-mail. Sua senha atual permanecerá inalterada.
+
+--------------------------------------------------
+
+Este é um e-mail automático. Por favor, não responda.
+© {timezone.now().year} Climatrak. Todos os direitos reservados.
             """
             
             send_mail(
