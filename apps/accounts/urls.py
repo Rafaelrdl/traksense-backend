@@ -6,7 +6,12 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
 from apps.accounts import views
-from apps.accounts.views_team import TeamMemberViewSet, InviteViewSet
+from apps.accounts.views_team import (
+    TeamMemberViewSet, 
+    InviteViewSet,
+    PublicInviteValidateView,
+    PublicInviteAcceptView
+)
 
 app_name = 'accounts'
 
@@ -30,6 +35,10 @@ urlpatterns = [
     path('users/me/', views.MeView.as_view(), name='me'),
     path('users/me/avatar/', views.AvatarUploadView.as_view(), name='avatar_upload'),
     path('users/me/change-password/', views.ChangePasswordView.as_view(), name='change_password'),
+    
+    # Public invite endpoints (no authentication required)
+    path('invites/validate/', PublicInviteValidateView.as_view(), name='invite_validate'),
+    path('invites/accept/', PublicInviteAcceptView.as_view(), name='invite_accept'),
     
     # Team management (router)
     path('', include(router.urls)),

@@ -87,25 +87,6 @@ services:
     networks:
       - climatrak
 
-  # Mailpit for SMTP testing
-  mailpit:
-    image: axllent/mailpit:latest
-    container_name: climatrak-mailpit
-    ports:
-      - "1025:1025"  # SMTP
-      - "8025:8025"  # Web UI
-    environment:
-      MP_MAX_MESSAGES: 5000
-      MP_SMTP_AUTH_ACCEPT_ANY: 1
-      MP_SMTP_AUTH_ALLOW_INSECURE: 1
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8025/"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
-    networks:
-      - climatrak
-
   # Django API
   api:
     build:
@@ -113,6 +94,8 @@ services:
       dockerfile: docker/api/Dockerfile
     container_name: climatrak-api
     command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 1 --worker-class gthread --threads 2 --timeout 120 --log-level debug
+    env_file:
+      - ../.env
     environment:
       DJANGO_SECRET_KEY: dev-secret-key-change-in-production-minimum-50-characters-long
       DJANGO_SETTINGS_MODULE: config.settings.development
@@ -129,8 +112,6 @@ services:
       MINIO_BUCKET: files
       MINIO_USE_SSL: "False"
       EMQX_URL: mqtt://emqx:1883
-      MAILPIT_SMTP_HOST: mailpit
-      MAILPIT_SMTP_PORT: 1025
       ALLOWED_HOSTS: localhost,umc.localhost,api,*.localhost
       CORS_ORIGINS: http://localhost:5173,http://umc.localhost:5173
     ports:
@@ -146,8 +127,6 @@ services:
         condition: service_healthy
       emqx:
         condition: service_healthy
-      mailpit:
-        condition: service_healthy
     networks:
       - climatrak
 
@@ -158,6 +137,8 @@ services:
       dockerfile: docker/api/Dockerfile
     container_name: climatrak-worker
     command: celery -A config worker --loglevel=info
+    env_file:
+      - ../.env
     environment:
       DJANGO_SECRET_KEY: dev-secret-key-change-in-production-minimum-50-characters-long
       DJANGO_SETTINGS_MODULE: config.settings.development

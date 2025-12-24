@@ -402,11 +402,17 @@ PAYLOAD_PARSER_MODULES = [
     # Adicione novos parsers aqui conforme necessário
 ]
 
-# Email (Mailpit for development)
+# Email Configuration (SMTP)
+# Configure via environment variables: MAIL_HOST, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD, MAIL_ENCRYPTION, MAIL_FROM_ADDRESS
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = os.getenv('MAILPIT_SMTP_HOST', 'mailpit')
-EMAIL_PORT = int(os.getenv('MAILPIT_SMTP_PORT', '1025'))
-EMAIL_USE_TLS = False
+EMAIL_HOST = os.getenv('MAIL_HOST', 'smtp.hostinger.com')
+EMAIL_PORT = int(os.getenv('MAIL_PORT', '465'))
+EMAIL_USE_TLS = os.getenv('MAIL_ENCRYPTION', 'ssl').lower() == 'tls'
+EMAIL_USE_SSL = os.getenv('MAIL_ENCRYPTION', 'ssl').lower() == 'ssl'
+EMAIL_HOST_USER = os.getenv('MAIL_USERNAME', '')
+EMAIL_HOST_PASSWORD = os.getenv('MAIL_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.getenv('MAIL_FROM_ADDRESS', 'noreply@climatrak.com.br')
+EMAIL_TIMEOUT = 10  # Timeout de 10 segundos para conexão SMTP
 
 # ============================================================================
 # DJANGO JAZZMIN - Modern Admin Interface
@@ -531,5 +537,3 @@ JAZZMIN_UI_TWEAKS = {
         "success": "btn-success"
     }
 }
-
-EMAIL_USE_SSL = False

@@ -1,7 +1,7 @@
 """
 Views for team management (memberships and invites).
 """
-
+import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -22,6 +22,8 @@ from .serializers_team import (
     TeamStatsSerializer
 )
 from .permissions import CanManageTeam
+
+logger = logging.getLogger(__name__)
 
 
 class TeamMemberViewSet(viewsets.ModelViewSet):
@@ -266,12 +268,180 @@ class InviteViewSet(viewsets.ModelViewSet):
         html_message = render_to_string('emails/team_invite.html', context)
         plain_message = render_to_string('emails/team_invite.txt', context)
         
-        # Send email
-        send_mail(
-            subject=subject,
-            message=plain_message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[invite.email],
-            html_message=html_message,
-            fail_silently=False,
+        # Send email (fail_silently=True para não bloquear a requisição)
+        try:
+            send_mail(
+                subject=subject,
+                message=plain_message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[invite.email],
+                html_message=html_message,
+                fail_silently=False,
+            )
+            logger.info(f"✅ Invite email sent to {invite.email}")
+        except Exception as e:
+            logger.error(f"❌ Failed to send invite email to {invite.email}: {e}")
+            # Não propaga o erro - o convite foi criado, apenas o email falhou
+
+
+# =============================================================================
+# PUBLIC INVITE ACCEPTANCE VIEW (No authentication required)
+# =============================================================================
+
+from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+
+
+class PublicInviteValidateView(APIView):
+    """
+    Public endpoint to validate an invite token.
+    GET /api/invites/validate/?token=<token>
+    """
+    permission_classes = [AllowAny]
+    
+    def get(self, request):
+        token = request.query_params.get('token')
+        
+        if not token:
+            return Response(
+                {"detail": "Token is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            invite = Invite.objects.select_related('tenant', 'invited_by').get(token=token)
+        except Invite.DoesNotExist:
+            return Response(
+                {"detail": "Invalid invite token."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if not invite.is_valid:
+            if invite.is_expired:
+                invite.status = 'expired'
+                invite.save()
+                return Response(
+                    {"detail": "This invite has expired."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            return Response(
+                {"detail": "This invite is no longer valid."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        return Response({
+            "id": invite.id,
+            "email": invite.email,
+            "role": invite.role,
+            "tenant_name": invite.tenant.name,
+            "tenant_slug": invite.tenant.schema_name,
+            "invited_by_name": invite.invited_by.full_name if invite.invited_by else 'Team',
+            "expires_at": invite.expires_at.isoformat(),
+        })
+
+
+class PublicInviteAcceptView(APIView):
+    """
+    Public endpoint to accept an invite and create user account.
+    POST /api/invites/accept/
+    """
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        token = request.data.get('token')
+        full_name = request.data.get('name', '').strip()
+        password = request.data.get('password')
+        
+        # Validate required fields
+        if not token:
+            return Response(
+                {"detail": "Token is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not full_name:
+            return Response(
+                {"detail": "Name is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not password:
+            return Response(
+                {"detail": "Password is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if len(password) < 8:
+            return Response(
+                {"detail": "Password must be at least 8 characters."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get invite
+        try:
+            invite = Invite.objects.select_related('tenant', 'invited_by').get(token=token)
+        except Invite.DoesNotExist:
+            return Response(
+                {"detail": "Invalid invite token."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if not invite.is_valid:
+            if invite.is_expired:
+                invite.status = 'expired'
+                invite.save()
+            return Response(
+                {"detail": "This invite is no longer valid."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if user already exists
+        existing_user = User.objects.filter(email__iexact=invite.email).first()
+        if existing_user:
+            return Response(
+                {"detail": "An account with this email already exists. Please login."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create user
+        name_parts = full_name.split(' ', 1)
+        first_name = name_parts[0]
+        last_name = name_parts[1] if len(name_parts) > 1 else ''
+        
+        user = User.objects.create_user(
+            username=invite.email,
+            email=invite.email,
+            password=password,
+            first_name=first_name,
+            last_name=last_name,
         )
+        
+        # Accept invite and create membership
+        try:
+            membership = invite.accept(user)
+        except Exception as e:
+            # If membership creation fails, delete the user
+            user.delete()
+            return Response(
+                {"detail": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        logger.info(f"✅ User {user.email} created and joined {invite.tenant.name} as {invite.role}")
+        
+        return Response({
+            "message": "Account created successfully.",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "full_name": user.full_name,
+            },
+            "membership": {
+                "tenant_name": invite.tenant.name,
+                "tenant_slug": invite.tenant.schema_name,
+                "role": membership.role,
+            }
+        }, status=status.HTTP_201_CREATED)
