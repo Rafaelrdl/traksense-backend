@@ -348,3 +348,44 @@ class Invite(models.Model):
             self.save()
 
 
+class PasswordResetToken(models.Model):
+    """
+    Token for password reset requests.
+    
+    Security features:
+    - Token expires after 1 hour
+    - Token can only be used once
+    - Old tokens are invalidated when new one is created
+    """
+    
+    user = models.ForeignKey(
+        'accounts.User',
+        on_delete=models.CASCADE,
+        related_name='password_reset_tokens',
+        verbose_name='User'
+    )
+    token = models.CharField('Token', max_length=64, unique=True)
+    created_at = models.DateTimeField('Created At', auto_now_add=True)
+    expires_at = models.DateTimeField('Expires At')
+    used = models.BooleanField('Used', default=False)
+    
+    class Meta:
+        db_table = 'password_reset_tokens'
+        verbose_name = 'Password Reset Token'
+        verbose_name_plural = 'Password Reset Tokens'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['token']),
+            models.Index(fields=['user', 'used']),
+        ]
+    
+    def __str__(self):
+        return f"Password reset for {self.user.email}"
+    
+    def is_expired(self):
+        """Check if token has expired."""
+        return timezone.now() > self.expires_at
+    
+    def is_valid(self):
+        """Check if token is still valid."""
+        return not self.used and not self.is_expired()

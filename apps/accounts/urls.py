@@ -12,6 +12,11 @@ from apps.accounts.views_team import (
     PublicInviteValidateView,
     PublicInviteAcceptView
 )
+from apps.accounts.views_password_reset import (
+    PasswordResetRequestView,
+    PasswordResetValidateView,
+    PasswordResetConfirmView
+)
 
 app_name = 'accounts'
 
@@ -30,6 +35,11 @@ urlpatterns = [
     path('auth/logout/', views.LogoutView.as_view(), name='logout'),
     # 🔐 SECURITY: Use cookie-based token refresh (not standard TokenRefreshView)
     path('auth/token/refresh/', views.CookieTokenRefreshView.as_view(), name='token_refresh'),
+    
+    # Password Reset
+    path('auth/password-reset/request/', PasswordResetRequestView.as_view(), name='password_reset_request'),
+    path('auth/password-reset/validate/', PasswordResetValidateView.as_view(), name='password_reset_validate'),
+    path('auth/password-reset/confirm/', PasswordResetConfirmView.as_view(), name='password_reset_confirm'),
     
     # User profile
     path('users/me/', views.MeView.as_view(), name='me'),
